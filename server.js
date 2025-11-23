@@ -21,6 +21,7 @@ app.use(bodyParser.urlencoded({ extended: false }));
 // Updated CORS configuration for production
 const allowedOrigins = [
   "http://localhost:3000",
+  "https://mikalab-frontend.vercel.app",
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
@@ -29,15 +30,18 @@ app.use(
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
 
-      if (
-        allowedOrigins.includes(origin) ||
-        process.env.NODE_ENV !== "production"
-      ) {
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      
+      if (process.env.NODE_ENV !== "production") {
         return callback(null, true);
       }
       return callback(new Error("CORS policy violation"), false);
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
