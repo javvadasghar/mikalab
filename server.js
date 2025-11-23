@@ -2,7 +2,7 @@ var createError = require("http-errors");
 var express = require("express");
 var app = express();
 require("dotenv").config();
-const db = require("../backend/config/db.config");
+const db = require("./config/db.config");
 var bodyParser = require("body-parser");
 var userroutes1 = require("./routes/userRoutes");
 var scenarioRoutes = require("./routes/ScenerioRoutes");
