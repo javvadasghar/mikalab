@@ -192,16 +192,22 @@ const deleteUser = async (req, res) => {
 
 const authenticateUser = async (req, res, next) => {
   try {
+    let token = null;
     const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      token = authHeader.split(" ")[1];
+    }
+    if (!token && req.query.token) {
+      token = req.query.token;
+    }
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    if (!token) {
       return res.status(401).json({
         success: false,
         message: "Authentication required",
       });
     }
 
-    const token = authHeader.split(" ")[1];
     const decoded = jwt.verify(
       token,
       process.env.JWT_SECRET || "your-secret-key"

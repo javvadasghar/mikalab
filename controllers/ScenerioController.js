@@ -3,6 +3,7 @@ const videoGenerator = require("../services/videoGenerator");
 const path = require("path");
 const fs = require("fs");
 
+let videoQueue = [];
 let isProcessingQueue = false;
 
 const calculateScenarioDuration = (stops) => {
@@ -434,6 +435,82 @@ const deleteScenario = async (req, res) => {
   }
 };
 
+const previewScenarioVideo = async (req, res) => {
+  try {
+    const user = req.user;
+
+    const scenario = await scenarioModel.findById(req.params.id);
+
+    if (!scenario) {
+      return res.status(404).json({
+        success: false,
+        message: "Scenario not found",
+      });
+    }
+
+    if (!user.isAdmin && scenario.createdBy.toString() !== user.id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "You don't have permission to preview this scenario",
+      });
+    }
+
+    const videosDir = path.join(__dirname, "../videos");
+    const videoPath = path.join(videosDir, `scenario_${scenario._id}.mp4`);
+
+    if (!fs.existsSync(videoPath)) {
+      const inQueue = videoQueue.some(
+        (task) => task.scenarioId.toString() === scenario._id.toString()
+      );
+
+      if (inQueue || scenario.videoStatus === "generating") {
+        return res.status(404).json({
+          success: false,
+          message: "Video is being generated. Please try again in a moment.",
+        });
+      }
+
+      return res.status(404).json({
+        success: false,
+        message: "Video not found. Please regenerate the video.",
+      });
+    }
+
+    const stat = fs.statSync(videoPath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunksize = end - start + 1;
+      const file = fs.createReadStream(videoPath, { start, end });
+      const head = {
+        "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+        "Accept-Ranges": "bytes",
+        "Content-Length": chunksize,
+        "Content-Type": "video/mp4",
+      };
+      res.writeHead(206, head);
+      file.pipe(res);
+    } else {
+      const head = {
+        "Content-Length": fileSize,
+        "Content-Type": "video/mp4",
+      };
+      res.writeHead(200, head);
+      fs.createReadStream(videoPath).pipe(res);
+    }
+  } catch (err) {
+    console.log("Error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to preview video",
+    });
+  }
+};
+
 const generateScenarioVideo = async (req, res) => {
   try {
     const user = req.user;
@@ -516,5 +593,6 @@ module.exports = {
   updateScenario,
   deleteScenario,
   generateScenarioVideo,
+  previewScenarioVideo,
   getQueueStatus,
 };

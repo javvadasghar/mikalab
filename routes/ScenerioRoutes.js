@@ -7,7 +7,8 @@ const {
   updateScenario,
   deleteScenario,
   generateScenarioVideo,
-  getQueueStatus
+  previewScenarioVideo,
+  getQueueStatus,
 } = require("../controllers/ScenerioController");
 const { authenticateUser } = require("../controllers/userController");
 router.post("/", authenticateUser, createScenario);
@@ -16,6 +17,7 @@ router.get("/queue-status", authenticateUser, getQueueStatus);
 router.get("/:id", authenticateUser, getScenarioById);
 router.put("/:id", authenticateUser, updateScenario);
 router.delete("/:id", authenticateUser, deleteScenario);
-router.get("/:id/video", authenticateUser, generateScenarioVideo);
+router.get("/:id/video/preview", authenticateUser, previewScenarioVideo);
+router.get("/:id/video/download", authenticateUser, generateScenarioVideo);
 
 module.exports = router;
