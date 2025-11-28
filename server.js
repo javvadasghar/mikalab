@@ -18,30 +18,15 @@ if (!fs.existsSync(videosDir)) fs.mkdirSync(videosDir, { recursive: true });
 
 app.use(bodyParser.urlencoded({ extended: false }));
 
-// Updated CORS configuration for production
-const allowedOrigins = [
-  "http://localhost:3000",
-  "https://mikalab-frontend.vercel.app",
-  process.env.FRONTEND_URL,
-].filter(Boolean);
-
 app.use(
   cors({
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
-
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      
-      if (process.env.NODE_ENV !== "production") {
-        return callback(null, true);
-      }
-      return callback(new Error("CORS policy violation"), false);
-    },
+    origin: "*",
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "Range", "Accept"],
+    exposedHeaders: ["Content-Range", "Accept-Ranges", "Content-Length"],
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
   })
 );
 
@@ -60,18 +45,14 @@ app.get("/health", (req, res) => {
 app.use("/api/user", userroutes1);
 app.use("/api/scenario", scenarioRoutes);
 
-// 404 handler
 app.use(function (req, res, next) {
   next(createError(404));
 });
 
-// Error handler - FIXED
 app.use(function (err, req, res, next) {
-  // Set locals, only providing error in development
   res.locals.message = err.message;
   res.locals.error = req.app.get("env") === "development" ? err : {};
 
-  // Send error response with proper status code
   const statusCode = err.status || 500;
   res.status(statusCode).json({
     error: {
