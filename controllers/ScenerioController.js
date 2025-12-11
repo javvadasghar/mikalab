@@ -209,7 +209,7 @@ const getAllScenarios = async (req, res) => {
 
 const updateScenario = async (req, res) => {
   try {
-    const { name, stops } = req.body;
+    const { name, stops, theme } = req.body;
     const user = req.user;
 
     if (!name || !stops || !Array.isArray(stops) || stops.length === 0) {
@@ -274,32 +274,37 @@ const updateScenario = async (req, res) => {
     const stopsChanged =
       normalizeStops(existingScenario.stops) !== normalizeStops(processedStops);
 
+    const themeChanged = theme && existingScenario.theme !== theme;
+
     const scenario = await scenarioModel
       .findByIdAndUpdate(
         req.params.id,
         {
           name: name,
           stops: processedStops,
+          ...(theme && { theme: theme }),
           updatedBy: user.id,
           updatedByName: `${user.firstName} ${user.lastName}`,
           lastUpdatedAt: new Date(),
-          ...(stopsChanged && { videoStatus: "generating" }),
+          ...((stopsChanged || themeChanged) && { videoStatus: "generating" }),
         },
         { new: true }
       )
       .populate("createdBy", "firstName lastName email")
       .populate("updatedBy", "firstName lastName email");
 
+    const needsVideoRegeneration = stopsChanged || themeChanged;
+
     res.status(200).json({
       success: true,
-      message: stopsChanged
+      message: needsVideoRegeneration
         ? "Scenario updated successfully. Video will be regenerated shortly."
         : "Scenario updated successfully.",
       scenario: scenario,
-      videoRegenerated: stopsChanged,
+      videoRegenerated: needsVideoRegeneration,
     });
 
-    if (stopsChanged) {
+    if (needsVideoRegeneration) {
       const videosDir = path.join(__dirname, "../videos");
       const oldVideoPath = path.join(videosDir, `scenario_${scenario._id}.mp4`);
 
@@ -383,8 +388,7 @@ const getScenarioById = async (req, res) => {
 
 const deleteScenario = async (req, res) => {
   try {
-    const user = req.user; // From auth middleware
-
+    const user = req.user;
     const scenario = await scenarioModel.findById(req.params.id);
 
     if (!scenario) {

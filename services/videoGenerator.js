@@ -8,6 +8,30 @@ class VideoGenerator {
     this.width = 1920;
     this.height = 1080;
     this.fps = 10;
+
+    this.themes = {
+      dark: {
+        background: "#3c3c3c",
+        header: "#7a7a7a",
+        accent: "#ff8800",
+        text: "#ffffff",
+        departure: "#ffffff",
+        footer: "#7a7a7a",
+      },
+      light: {
+        background: "#f5f5f5",
+        header: "#ffffff",
+        accent: "#ff8800",
+        text: "#000000",
+        departure: "#000000",
+        footer: "#ffffff",
+      },
+    };
+  }
+
+  formatTime(seconds) {
+    const mins = Math.ceil(seconds / 60);
+    return `${mins} Min`;
   }
 
   async generateStopFrame(
@@ -15,33 +39,80 @@ class VideoGenerator {
     totalStops,
     stops,
     routeName,
-    elapsedSeconds
+    elapsedSeconds,
+    theme = "dark"
   ) {
     const canvas = createCanvas(this.width, this.height);
     const ctx = canvas.getContext("2d");
-    let cumulativeTimes = [0];
+    const colors = this.themes[theme] || this.themes.dark;
+    let timeline = [];
+    let cumulativeTime = 0;
+
     for (let i = 0; i < stops.length; i++) {
-      cumulativeTimes.push(cumulativeTimes[i] + stops[i].durationSeconds);
+      const stop = stops[i];
+
+      const stayDuration = Number(stop.betweenSeconds) || 0;
+      if (stayDuration > 0) {
+        timeline.push({
+          type: "stay",
+          stopIndex: i,
+          startTime: cumulativeTime,
+          endTime: cumulativeTime + stayDuration,
+          duration: stayDuration,
+        });
+        cumulativeTime += stayDuration;
+      }
+
+      if (stop.emergencies && Array.isArray(stop.emergencies)) {
+        for (const emergency of stop.emergencies) {
+          const emergencyDuration = Number(emergency.seconds) || 0;
+          if (emergencyDuration > 0) {
+            timeline.push({
+              type: "emergency",
+              stopIndex: i,
+              startTime: cumulativeTime,
+              endTime: cumulativeTime + emergencyDuration,
+              duration: emergencyDuration,
+              emergencyText: emergency.text || "",
+            });
+            cumulativeTime += emergencyDuration;
+          }
+        }
+      }
+
+      const travelDuration = Number(stop.staySeconds) || 0;
+      if (i < stops.length - 1 && travelDuration > 0) {
+        timeline.push({
+          type: "travel",
+          stopIndex: i,
+          nextStopIndex: i + 1,
+          startTime: cumulativeTime,
+          endTime: cumulativeTime + travelDuration,
+          duration: travelDuration,
+        });
+        cumulativeTime += travelDuration;
+      }
     }
 
-    let currentStopIndex = 0;
-    for (let i = 0; i < cumulativeTimes.length - 1; i++) {
-      if (
-        elapsedSeconds >= cumulativeTimes[i] &&
-        elapsedSeconds < cumulativeTimes[i + 1]
-      ) {
-        currentStopIndex = i;
+    let currentPhase = timeline[0];
+    for (const phase of timeline) {
+      if (elapsedSeconds >= phase.startTime && elapsedSeconds < phase.endTime) {
+        currentPhase = phase;
         break;
       }
     }
 
-    ctx.fillStyle = "#3c3c3c";
-    ctx.fillRect(0, 0, this.width, this.height);
+    const isEmergency = currentPhase.type === "emergency";
+    const currentStopIndex = currentPhase.stopIndex;
+    const displayStopIndex = currentStopIndex;
+    const currentStopData = stops[displayStopIndex];
 
+    ctx.fillStyle = colors.background;
+    ctx.fillRect(0, 0, this.width, this.height);
     const headerHeight = 120;
-    ctx.fillStyle = "#7a7a7a";
+    ctx.fillStyle = colors.header;
     ctx.fillRect(34, 34, this.width - 68, headerHeight);
-    ctx.fillStyle = "#ff8800";
+    ctx.fillStyle = colors.accent;
     ctx.beginPath();
     ctx.moveTo(90, 50);
     ctx.lineTo(150, 50);
@@ -52,93 +123,215 @@ class VideoGenerator {
     ctx.closePath();
     ctx.fill();
 
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = colors.text;
     ctx.font = "bold 70px Arial";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText("M", 120, 94);
-
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = colors.text;
     ctx.font = "bold 56px Arial";
     ctx.textAlign = "left";
-    ctx.fillText(`${stops[currentStopIndex].name}`, 235, 100);
+    ctx.fillText(`${currentStopData.name}`, 235, 100);
+    ctx.textAlign = "right";
+    const remainingTime = Math.ceil(currentPhase.endTime - elapsedSeconds);
 
-    const nextStopStartIndex = currentStopIndex + 1;
-    const visibleStops = stops.slice(
-      nextStopStartIndex,
-      nextStopStartIndex + 3
-    );
-    const visibleStopsCount = visibleStops.length;
-
-    const lineX = 120;
-    const startY = 200;
-    const bottomY = this.height - 280;
-    const stopSpacing =
-      visibleStopsCount > 1 ? (bottomY - startY) / (visibleStopsCount - 1) : 0;
-
-    if (visibleStopsCount > 0) {
-      ctx.strokeStyle = "#ff8800";
-      ctx.lineWidth = 12;
-      ctx.beginPath();
-      ctx.moveTo(lineX, startY);
-      ctx.lineTo(lineX, visibleStopsCount === 1 ? startY : bottomY);
-      ctx.stroke();
+    if (currentPhase.type === "stay") {
+      ctx.fillStyle = colors.departure;
+      ctx.font = "bold 48px Arial";
+      ctx.fillText(
+        `Departure in: ${this.formatTime(remainingTime)}`,
+        this.width - 100,
+        100
+      );
     }
 
-    ctx.textAlign = "left";
-    for (let i = 0; i < visibleStopsCount; i++) {
-      const actualIndex = nextStopStartIndex + i;
-      const y = visibleStopsCount === 1 ? startY : startY + i * stopSpacing;
+    if (isEmergency) {
+      const emergencyMessage = currentPhase.emergencyText;
+      const emergencyY = 180;
+      const emergencyHeight = this.height - emergencyY - 50;
 
-      let remainingTime = cumulativeTimes[actualIndex] - elapsedSeconds;
-
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(lineX, y, 20, 0, Math.PI * 2);
-      ctx.fill();
-
-      if (i === 0) {
-        ctx.strokeStyle = "#ff8800";
-        ctx.lineWidth = 4;
+      const pulseIntensity = Math.abs(Math.sin(elapsedSeconds * 3)) * 0.3 + 0.7;
+      const gradient = ctx.createLinearGradient(
+        0,
+        emergencyY,
+        0,
+        emergencyY + emergencyHeight
+      );
+      gradient.addColorStop(0, `rgba(220, 38, 38, ${pulseIntensity})`);
+      gradient.addColorStop(0.5, `rgba(185, 28, 28, ${pulseIntensity})`);
+      gradient.addColorStop(1, `rgba(153, 27, 27, ${pulseIntensity})`);
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, emergencyY, this.width, emergencyHeight);
+      ctx.strokeStyle = "#fbbf24";
+      ctx.lineWidth = 12;
+      const stripeOffset = (elapsedSeconds * 100) % 100;
+      for (let i = -5; i < 30; i++) {
+        const x = i * 100 - stripeOffset;
         ctx.beginPath();
-        ctx.arc(lineX, y, 24, 0, Math.PI * 2);
+        ctx.moveTo(x, emergencyY);
+        ctx.lineTo(x + emergencyHeight, emergencyY + emergencyHeight);
         ctx.stroke();
       }
 
+      const flashIntensity =
+        Math.abs(Math.sin(elapsedSeconds * 4)) > 0.5 ? 1 : 0.4;
+      ctx.strokeStyle = `rgba(251, 191, 36, ${flashIntensity})`;
+      ctx.lineWidth = 15;
+      ctx.strokeRect(
+        20,
+        emergencyY + 20,
+        this.width - 40,
+        emergencyHeight - 40
+      );
+
+      ctx.strokeStyle = `rgba(255, 255, 0, ${flashIntensity * 0.8})`;
+      ctx.lineWidth = 8;
+      ctx.strokeRect(
+        35,
+        emergencyY + 35,
+        this.width - 70,
+        emergencyHeight - 70
+      );
+
+      const iconSize = 100 + Math.sin(elapsedSeconds * 5) * 20;
+      ctx.fillStyle = "#fbbf24";
+      ctx.font = `bold ${iconSize}px Arial`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      ctx.shadowColor = "rgba(251, 191, 36, 0.8)";
+      ctx.shadowBlur = 30;
+      ctx.fillText("⚠", this.width / 2, emergencyY + 150);
+
       ctx.fillStyle = "#ffffff";
-      ctx.font = i === 0 ? "bold 56px Arial" : "56px Arial";
-      ctx.fillText(visibleStops[i].name, 235, y + 15);
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "56px Arial";
-      ctx.textAlign = "right";
-      const seconds = Math.ceil(remainingTime);
-      ctx.fillText(`${seconds} Sec.`, this.width - 100, y + 15);
+      ctx.font = "bold 72px Arial";
+      ctx.shadowColor = "rgba(0, 0, 0, 0.9)";
+      ctx.shadowBlur = 15;
+      ctx.shadowOffsetX = 4;
+      ctx.shadowOffsetY = 4;
+
+      const maxWidth = this.width - 200;
+      const words = emergencyMessage.split(" ");
+      let line = "";
+      let y = emergencyY + 280;
+      const lineHeight = 85;
+
+      for (let i = 0; i < words.length; i++) {
+        const testLine = line + words[i] + " ";
+        const metrics = ctx.measureText(testLine);
+
+        if (metrics.width > maxWidth && i > 0) {
+          ctx.fillText(line, this.width / 2, y);
+          line = words[i] + " ";
+          y += lineHeight;
+        } else {
+          line = testLine;
+        }
+      }
+      ctx.fillText(line, this.width / 2, y);
+      ctx.fillStyle = "#fbbf24";
+      ctx.font = "bold 48px Arial";
+      ctx.fillText("🚨 EMERGENCY 🚨", this.width / 2, emergencyY + 60);
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+    } else {
+      const nextStopStartIndex = displayStopIndex + 1;
+      const visibleStops = stops.slice(
+        nextStopStartIndex,
+        nextStopStartIndex + 3
+      );
+      const visibleStopsCount = visibleStops.length;
+
+      const lineX = 120;
+      const startY = 200;
+      const bottomY = this.height - 280;
+      const stopSpacing =
+        visibleStopsCount > 1
+          ? (bottomY - startY) / (visibleStopsCount - 1)
+          : 0;
+
+      if (visibleStopsCount > 0) {
+        ctx.strokeStyle = colors.accent;
+        ctx.lineWidth = 12;
+        ctx.beginPath();
+        ctx.moveTo(lineX, startY);
+        ctx.lineTo(lineX, visibleStopsCount === 1 ? startY : bottomY);
+        ctx.stroke();
+      }
+
       ctx.textAlign = "left";
+      for (let i = 0; i < visibleStopsCount; i++) {
+        const actualIndex = nextStopStartIndex + i;
+        const y = visibleStopsCount === 1 ? startY : startY + i * stopSpacing;
+
+        let remainingTime = 0;
+        for (const phase of timeline) {
+          if (phase.type === "stay" && phase.stopIndex === actualIndex) {
+            remainingTime = phase.startTime - elapsedSeconds;
+            break;
+          }
+        }
+
+        if (remainingTime < 0) remainingTime = 0;
+
+        ctx.fillStyle = colors.text;
+        ctx.beginPath();
+        ctx.arc(lineX, y, 20, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (i === 0) {
+          ctx.strokeStyle = colors.accent;
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(lineX, y, 24, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = colors.text;
+        ctx.font = i === 0 ? "bold 56px Arial" : "56px Arial";
+        ctx.fillText(visibleStops[i].name, 235, y + 15);
+        ctx.fillStyle = colors.text;
+        ctx.font = "56px Arial";
+        ctx.textAlign = "right";
+        const seconds = Math.max(0, Math.ceil(remainingTime));
+        ctx.fillText(this.formatTime(seconds), this.width - 100, y + 15);
+        ctx.textAlign = "left";
+      }
     }
 
-    const bottomBarHeight = 150;
-    const bottomMargin = 24;
-    const bottomBarY = this.height - bottomBarHeight - bottomMargin;
-    ctx.fillStyle = "#7a7a7a";
-    ctx.fillRect(34, bottomBarY, this.width - 68, bottomBarHeight);
+    if (!isEmergency) {
+      const bottomBarHeight = 150;
+      const bottomMargin = 24;
+      const bottomBarY = this.height - bottomBarHeight - bottomMargin;
+      ctx.fillStyle = colors.footer;
+      ctx.fillRect(34, bottomBarY, this.width - 68, bottomBarHeight);
 
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 64px Arial";
-    ctx.textAlign = "left";
-    const finalStopName = stops[stops.length - 1].name;
-    ctx.fillText(finalStopName, 100, bottomBarY + 70);
+      ctx.fillStyle = colors.text;
+      ctx.font = "bold 64px Arial";
+      ctx.textAlign = "left";
+      const finalStopName = stops[stops.length - 1].name;
+      ctx.fillText(finalStopName, 100, bottomBarY + 70);
 
-    const remainingTimeToEnd = cumulativeTimes[stops.length] - elapsedSeconds;
-    const remainingSecondsToEnd = Math.ceil(remainingTimeToEnd);
+      const lastStayPhase = timeline.filter((p) => p.type === "stay").pop();
+      const remainingTimeToFinalStop = lastStayPhase
+        ? lastStayPhase.startTime - elapsedSeconds
+        : 0;
+      const remainingSecondsToFinalStop = Math.max(
+        0,
+        Math.ceil(remainingTimeToFinalStop)
+      );
 
-    ctx.font = "bold 56px Arial";
-    ctx.textAlign = "right";
-    ctx.fillText(
-      `${remainingSecondsToEnd} Sec.`,
-      this.width - 100,
-      bottomBarY + 70
-    );
-    ctx.textAlign = "left";
+      ctx.font = "bold 56px Arial";
+      ctx.textAlign = "right";
+      ctx.fillText(
+        this.formatTime(remainingSecondsToFinalStop),
+        this.width - 100,
+        bottomBarY + 70
+      );
+      ctx.textAlign = "left";
+    }
 
     return canvas.toBuffer("image/png");
   }
@@ -157,10 +350,25 @@ class VideoGenerator {
         scenario.stops &&
         scenario.stops.length > 0 &&
         scenario.stops[scenario.stops.length - 1].name;
-      const totalDuration = stops.reduce(
-        (sum, stop) => sum + stop.durationSeconds,
-        0
-      );
+
+      let totalDuration = 0;
+      for (let i = 0; i < stops.length; i++) {
+        const stayDuration = Number(stops[i].betweenSeconds) || 0;
+        const travelDuration = Number(stops[i].staySeconds) || 0;
+
+        totalDuration += stayDuration;
+
+        if (stops[i].emergencies && Array.isArray(stops[i].emergencies)) {
+          for (const emergency of stops[i].emergencies) {
+            totalDuration += Number(emergency.seconds) || 0;
+          }
+        }
+
+        if (i < stops.length - 1) {
+          totalDuration += travelDuration;
+        }
+      }
+
       const totalFrames = totalDuration * this.fps;
 
       for (let frame = 0; frame < totalFrames; frame++) {
@@ -171,7 +379,8 @@ class VideoGenerator {
           stops.length,
           stops,
           routeName,
-          elapsedSeconds
+          elapsedSeconds,
+          scenario.theme || "dark"
         );
 
         const framePath = path.join(

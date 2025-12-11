@@ -61,6 +61,11 @@ const scenarioSchema = new mongoose.Schema(
       enum: ['pending', 'generating', 'completed', 'failed'],
       default: 'pending'
     },
+    theme: {
+      type: String,
+      enum: ['dark', 'light'],
+      default: 'dark'
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
