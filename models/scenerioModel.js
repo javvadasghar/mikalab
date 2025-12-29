@@ -37,6 +37,11 @@ const stopSchema = new mongoose.Schema({
         type: String,
         default: "",
       },
+      startSecond: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
       seconds: {
         type: Number,
         default: 0,

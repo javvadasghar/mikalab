@@ -7,11 +7,11 @@ class VideoGenerator {
   constructor() {
     this.width = 1920;
     this.height = 1080;
-    this.fps = 10;
+    this.fps = 1;
 
     this.themes = {
       dark: {
-        background: "#3c3c3c",
+        background: "#222121ff",
         header: "#7a7a7a",
         accent: "#ff8800",
         text: "#ffffff",
@@ -31,7 +31,7 @@ class VideoGenerator {
 
   formatTime(seconds) {
     const mins = Math.ceil(seconds / 60);
-    return `${mins} Min`;
+    return `${mins} Min.`;
   }
 
   async generateStopFrame(
@@ -45,55 +45,150 @@ class VideoGenerator {
     const canvas = createCanvas(this.width, this.height);
     const ctx = canvas.getContext("2d");
     const colors = this.themes[theme] || this.themes.dark;
-    let timeline = [];
-    let cumulativeTime = 0;
+    
+    // Build the logical timeline (stays and travels without emergencies)
+    let logicalTimeline = [];
+    let logicalTime = 0;
 
     for (let i = 0; i < stops.length; i++) {
       const stop = stops[i];
 
-      const stayDuration = Number(stop.betweenSeconds) || 0;
-      if (stayDuration > 0) {
-        timeline.push({
+      // betweenSeconds = time to stay at this stop (time until departure)
+      const stayAtStopDuration = Number(stop.betweenSeconds) || 0;
+      if (stayAtStopDuration > 0) {
+        logicalTimeline.push({
           type: "stay",
           stopIndex: i,
-          startTime: cumulativeTime,
-          endTime: cumulativeTime + stayDuration,
-          duration: stayDuration,
+          logicalStart: logicalTime,
+          logicalEnd: logicalTime + stayAtStopDuration,
+          duration: stayAtStopDuration,
         });
-        cumulativeTime += stayDuration;
+        logicalTime += stayAtStopDuration;
       }
 
-      if (stop.emergencies && Array.isArray(stop.emergencies)) {
-        for (const emergency of stop.emergencies) {
-          const emergencyDuration = Number(emergency.seconds) || 0;
-          if (emergencyDuration > 0) {
-            timeline.push({
-              type: "emergency",
-              stopIndex: i,
-              startTime: cumulativeTime,
-              endTime: cumulativeTime + emergencyDuration,
-              duration: emergencyDuration,
-              emergencyText: emergency.text || "",
-            });
-            cumulativeTime += emergencyDuration;
-          }
-        }
-      }
-
-      const travelDuration = Number(stop.staySeconds) || 0;
-      if (i < stops.length - 1 && travelDuration > 0) {
-        timeline.push({
+      // staySeconds = travel time from this stop to the next stop
+      const travelToNextStopDuration = Number(stop.staySeconds) || 0;
+      if (i < stops.length - 1 && travelToNextStopDuration > 0) {
+        logicalTimeline.push({
           type: "travel",
           stopIndex: i,
           nextStopIndex: i + 1,
-          startTime: cumulativeTime,
-          endTime: cumulativeTime + travelDuration,
-          duration: travelDuration,
+          logicalStart: logicalTime,
+          logicalEnd: logicalTime + travelToNextStopDuration,
+          duration: travelToNextStopDuration,
         });
-        cumulativeTime += travelDuration;
+        logicalTime += travelToNextStopDuration;
       }
     }
 
+    // Collect and sort emergencies by logical time
+    let emergencies = [];
+    for (let i = 0; i < stops.length; i++) {
+      const stop = stops[i];
+      if (stop.emergencies && Array.isArray(stop.emergencies)) {
+        for (const emergency of stop.emergencies) {
+          const emergencyStart = Number(emergency.startSecond) || 0;
+          const emergencyDuration = Number(emergency.seconds) || 0;
+          if (emergencyDuration > 0) {
+            emergencies.push({
+              logicalStart: emergencyStart,
+              duration: emergencyDuration,
+              text: emergency.text || "",
+              stopIndex: i,
+            });
+          }
+        }
+      }
+    }
+    emergencies.sort((a, b) => a.logicalStart - b.logicalStart);
+
+    // Build physical timeline by inserting emergencies
+    let timeline = [];
+    let physicalTime = 0;
+    let logicalTimeProcessed = 0;
+    let emergencyIndex = 0;
+
+    for (const logicalPhase of logicalTimeline) {
+      let phaseLogicalStart = logicalPhase.logicalStart;
+      let phaseLogicalEnd = logicalPhase.logicalEnd;
+      let phaseDuration = phaseLogicalEnd - phaseLogicalStart;
+      let phaseElapsed = 0;
+
+      // Check if any emergency interrupts this phase
+      while (emergencyIndex < emergencies.length) {
+        const emergency = emergencies[emergencyIndex];
+        
+        if (emergency.logicalStart >= phaseLogicalEnd) {
+          // Emergency is after this phase
+          break;
+        }
+        
+        if (emergency.logicalStart >= phaseLogicalStart && emergency.logicalStart < phaseLogicalEnd) {
+          // Emergency interrupts this phase
+          const beforeEmergency = emergency.logicalStart - phaseLogicalStart;
+          
+          // Add the part before emergency (if any)
+          if (beforeEmergency > 0) {
+            timeline.push({
+              type: logicalPhase.type,
+              stopIndex: logicalPhase.stopIndex,
+              nextStopIndex: logicalPhase.nextStopIndex,
+              startTime: physicalTime,
+              endTime: physicalTime + beforeEmergency,
+              duration: beforeEmergency,
+              phaseProgress: phaseElapsed,
+              totalPhaseDuration: phaseDuration,
+            });
+            physicalTime += beforeEmergency;
+            phaseElapsed += beforeEmergency;
+            phaseLogicalStart += beforeEmergency;
+          }
+          
+          // Add emergency
+          timeline.push({
+            type: "emergency",
+            stopIndex: emergency.stopIndex,
+            startTime: physicalTime,
+            endTime: physicalTime + emergency.duration,
+            duration: emergency.duration,
+            emergencyText: emergency.text,
+          });
+          physicalTime += emergency.duration;
+          emergencyIndex++;
+        } else {
+          // Emergency is before this phase started (shouldn't happen with sorted list)
+          emergencyIndex++;
+        }
+      }
+
+      // Add remaining part of phase (or whole phase if no interruption)
+      const remainingDuration = phaseLogicalEnd - phaseLogicalStart;
+      if (remainingDuration > 0) {
+        timeline.push({
+          type: logicalPhase.type,
+          stopIndex: logicalPhase.stopIndex,
+          nextStopIndex: logicalPhase.nextStopIndex,
+          startTime: physicalTime,
+          endTime: physicalTime + remainingDuration,
+          duration: remainingDuration,
+          phaseProgress: phaseElapsed,
+          totalPhaseDuration: phaseDuration,
+        });
+        physicalTime += remainingDuration;
+      }
+    }
+
+    // Debug: Log timeline for verification
+    if (elapsedSeconds === 0) {
+      console.log('Timeline built:', timeline.map(p => ({
+        type: p.type,
+        start: p.startTime,
+        end: p.endTime,
+        text: p.emergencyText || 'N/A'
+      })));
+    }
+
+    // Find active phase at current time
     let currentPhase = timeline[0];
     for (const phase of timeline) {
       if (elapsedSeconds >= phase.startTime && elapsedSeconds < phase.endTime) {
@@ -102,8 +197,13 @@ class VideoGenerator {
       }
     }
 
-    const isEmergency = currentPhase.type === "emergency";
-    const currentStopIndex = currentPhase.stopIndex;
+    // Safety check
+    if (!currentPhase && timeline.length > 0) {
+      currentPhase = timeline[timeline.length - 1];
+    }
+
+    const isEmergency = currentPhase && currentPhase.type === "emergency";
+    const currentStopIndex = currentPhase ? currentPhase.stopIndex : 0;
     const displayStopIndex = currentStopIndex;
     const currentStopData = stops[displayStopIndex];
 
@@ -111,15 +211,15 @@ class VideoGenerator {
     ctx.fillRect(0, 0, this.width, this.height);
     const headerHeight = 120;
     ctx.fillStyle = colors.header;
-    ctx.fillRect(34, 34, this.width - 68, headerHeight);
+    ctx.fillRect(50, 50, this.width - 100, headerHeight);
     ctx.fillStyle = colors.accent;
     ctx.beginPath();
-    ctx.moveTo(90, 50);
-    ctx.lineTo(150, 50);
-    ctx.lineTo(180, 94);
-    ctx.lineTo(150, 138);
-    ctx.lineTo(90, 138);
-    ctx.lineTo(60, 94);
+    ctx.moveTo(106, 66);
+    ctx.lineTo(166, 66);
+    ctx.lineTo(196, 110);
+    ctx.lineTo(166, 154);
+    ctx.lineTo(106, 154);
+    ctx.lineTo(76, 110);
     ctx.closePath();
     ctx.fill();
 
@@ -127,26 +227,26 @@ class VideoGenerator {
     ctx.font = "bold 70px Arial";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("M", 120, 94);
+    ctx.fillText("M", 136, 110);
     ctx.fillStyle = colors.text;
     ctx.font = "bold 56px Arial";
     ctx.textAlign = "left";
-    ctx.fillText(`${currentStopData.name}`, 235, 100);
+    ctx.fillText(`${currentStopData.name}`, 251, 116);
     ctx.textAlign = "right";
-    const remainingTime = Math.ceil(currentPhase.endTime - elapsedSeconds);
+    const remainingTime = currentPhase ? Math.ceil(currentPhase.endTime - elapsedSeconds) : 0;
 
-    if (currentPhase.type === "stay") {
+    if (currentPhase && currentPhase.type === "stay") {
       ctx.fillStyle = colors.departure;
       ctx.font = "bold 48px Arial";
       ctx.fillText(
         `Departure in: ${this.formatTime(remainingTime)}`,
-        this.width - 100,
-        100
+        this.width - 120,
+        116
       );
     }
 
     if (isEmergency) {
-      const emergencyMessage = currentPhase.emergencyText;
+      const emergencyMessage = currentPhase.emergencyText || "EMERGENCY";
       const emergencyY = 180;
       const emergencyHeight = this.height - emergencyY - 50;
 
@@ -244,9 +344,9 @@ class VideoGenerator {
       );
       const visibleStopsCount = visibleStops.length;
 
-      const lineX = 120;
-      const startY = 200;
-      const bottomY = this.height - 280;
+      const lineX = 136;
+      const startY = 230;
+      const bottomY = this.height - 320;
       const stopSpacing =
         visibleStopsCount > 1
           ? (bottomY - startY) / (visibleStopsCount - 1)
@@ -291,28 +391,28 @@ class VideoGenerator {
 
         ctx.fillStyle = colors.text;
         ctx.font = i === 0 ? "bold 56px Arial" : "56px Arial";
-        ctx.fillText(visibleStops[i].name, 235, y + 15);
+        ctx.fillText(visibleStops[i].name, 251, y + 15);
         ctx.fillStyle = colors.text;
         ctx.font = "56px Arial";
         ctx.textAlign = "right";
         const seconds = Math.max(0, Math.ceil(remainingTime));
-        ctx.fillText(this.formatTime(seconds), this.width - 100, y + 15);
+        ctx.fillText(this.formatTime(seconds), this.width - 120, y + 15);
         ctx.textAlign = "left";
       }
     }
 
     if (!isEmergency) {
       const bottomBarHeight = 150;
-      const bottomMargin = 24;
+      const bottomMargin = 50;
       const bottomBarY = this.height - bottomBarHeight - bottomMargin;
       ctx.fillStyle = colors.footer;
-      ctx.fillRect(34, bottomBarY, this.width - 68, bottomBarHeight);
+      ctx.fillRect(50, bottomBarY, this.width - 100, bottomBarHeight);
 
       ctx.fillStyle = colors.text;
       ctx.font = "bold 64px Arial";
       ctx.textAlign = "left";
       const finalStopName = stops[stops.length - 1].name;
-      ctx.fillText(finalStopName, 100, bottomBarY + 70);
+      ctx.fillText(finalStopName, 120, bottomBarY + 70);
 
       const lastStayPhase = timeline.filter((p) => p.type === "stay").pop();
       const remainingTimeToFinalStop = lastStayPhase
@@ -327,7 +427,7 @@ class VideoGenerator {
       ctx.textAlign = "right";
       ctx.fillText(
         this.formatTime(remainingSecondsToFinalStop),
-        this.width - 100,
+        this.width - 120,
         bottomBarY + 70
       );
       ctx.textAlign = "left";
@@ -352,20 +452,28 @@ class VideoGenerator {
         scenario.stops[scenario.stops.length - 1].name;
 
       let totalDuration = 0;
+      
+      // Calculate normal timeline duration
       for (let i = 0; i < stops.length; i++) {
-        const stayDuration = Number(stops[i].betweenSeconds) || 0;
-        const travelDuration = Number(stops[i].staySeconds) || 0;
+        // betweenSeconds = time to stay at this stop
+        const stayAtStopDuration = Number(stops[i].betweenSeconds) || 0;
+        // staySeconds = travel time to next stop
+        const travelToNextStopDuration = Number(stops[i].staySeconds) || 0;
 
-        totalDuration += stayDuration;
-
-        if (stops[i].emergencies && Array.isArray(stops[i].emergencies)) {
-          for (const emergency of stops[i].emergencies) {
-            totalDuration += Number(emergency.seconds) || 0;
-          }
-        }
+        totalDuration += stayAtStopDuration;
 
         if (i < stops.length - 1) {
-          totalDuration += travelDuration;
+          totalDuration += travelToNextStopDuration;
+        }
+      }
+      
+      // Add all emergency durations to extend video length
+      for (let i = 0; i < stops.length; i++) {
+        if (stops[i].emergencies && Array.isArray(stops[i].emergencies)) {
+          for (const emergency of stops[i].emergencies) {
+            const emergencyDuration = Number(emergency.seconds) || 0;
+            totalDuration += emergencyDuration;
+          }
         }
       }
 

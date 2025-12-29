@@ -105,6 +105,7 @@ const createScenario = async (req, res) => {
         emergencies: Array.isArray(stop.emergencies)
           ? stop.emergencies.map((e) => ({
               text: e.text || "",
+              startSecond: Number(e.startSecond) || 0,
               seconds: Number(e.seconds) || 0,
             }))
           : [],
@@ -255,6 +256,7 @@ const updateScenario = async (req, res) => {
         emergencies: Array.isArray(stop.emergencies)
           ? stop.emergencies.map((e) => ({
               text: e.text || "",
+              startSecond: Number(e.startSecond) || 0,
               seconds: Number(e.seconds) || 0,
             }))
           : [],
