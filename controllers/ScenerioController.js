@@ -50,10 +50,14 @@ const processVideoQueue = async () => {
         }s, Queue position: ${videoQueue.length + 1})`
       );
 
-      await videoGenerator.generateVideo(task.scenario, task.videoPath);
+      const generatedVideoPath = await videoGenerator.generateVideo(
+        task.scenario,
+        task.videoPath
+      );
+      const generatedFileName = path.basename(generatedVideoPath);
 
       await scenarioModel.findByIdAndUpdate(task.scenarioId, {
-        videoPath: task.videoFileName,
+        videoPath: generatedFileName,
         videoStatus: "completed",
       });
 
@@ -91,13 +95,11 @@ const createScenario = async (req, res) => {
     const processedStops = stops.map((stop, index) => {
       const staySeconds = Number(stop.staySeconds) || 0;
       const betweenSeconds = Number(stop.betweenSeconds) || 0;
-      const durationSeconds = Number(stop.durationSeconds) || staySeconds;
 
       return {
         name: stop.name || `Stop ${index + 1}`,
         staySeconds: staySeconds,
         betweenSeconds: betweenSeconds,
-        durationSeconds: durationSeconds,
         emergencyEnabled:
           !!(stop.emergencies && stop.emergencies.length > 0) ||
           !!stop.emergencyEnabled,
@@ -242,13 +244,11 @@ const updateScenario = async (req, res) => {
     const processedStops = stops.map((stop, index) => {
       const staySeconds = Number(stop.staySeconds) || 0;
       const betweenSeconds = Number(stop.betweenSeconds) || 0;
-      const durationSeconds = Number(stop.durationSeconds) || staySeconds;
 
       return {
         name: stop.name || `Stop ${index + 1}`,
         staySeconds: staySeconds,
         betweenSeconds: betweenSeconds,
-        durationSeconds: durationSeconds,
         emergencyEnabled:
           !!(stop.emergencies && stop.emergencies.length > 0) ||
           !!stop.emergencyEnabled,
@@ -308,12 +308,38 @@ const updateScenario = async (req, res) => {
 
     if (needsVideoRegeneration) {
       const videosDir = path.join(__dirname, "../videos");
-      const oldVideoPath = path.join(videosDir, `scenario_${scenario._id}.mp4`);
+      const deleteOldVideos = async () => {
+        const maxRetries = 3;
+        const retryDelay = 1000;
 
-      if (fs.existsSync(oldVideoPath)) {
-        fs.unlinkSync(oldVideoPath);
-        console.log(`Deleted old video for scenario ${scenario._id}`);
-      }
+        if (fs.existsSync(videosDir)) {
+          const files = fs.readdirSync(videosDir);
+          const scenarioPattern = `scenario_${scenario._id}`;
+
+          for (const file of files) {
+            if (file.startsWith(scenarioPattern) && file.endsWith(".mp4")) {
+              let attempts = 0;
+              while (attempts < maxRetries) {
+                try {
+                  await new Promise((resolve) =>
+                    setTimeout(resolve, retryDelay * attempts)
+                  );
+                  fs.unlinkSync(path.join(videosDir, file));
+                  break;
+                } catch (err) {
+                  attempts++;
+                  if (attempts >= maxRetries) {
+                    console.error(
+                      `Failed to delete ${file} after ${maxRetries} attempts: ${err.message}`
+                    );
+                  }
+                }
+              }
+            }
+          }
+        }
+      };
+      setImmediate(() => deleteOldVideos());
 
       const videoFileName = `scenario_${scenario._id}.mp4`;
       const videoPath = path.join(videosDir, videoFileName);

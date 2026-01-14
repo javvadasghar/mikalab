@@ -17,11 +17,6 @@ const stopSchema = new mongoose.Schema({
     min: 0,
     default: 0,
   },
-  durationSeconds: {
-    type: Number,
-    required: true,
-    min: 1,
-  },
   emergencyEnabled: {
     type: Boolean,
     default: false,
@@ -63,33 +58,33 @@ const scenarioSchema = new mongoose.Schema(
     },
     videoStatus: {
       type: String,
-      enum: ['pending', 'generating', 'completed', 'failed'],
-      default: 'pending'
+      enum: ["pending", "generating", "completed", "failed"],
+      default: "pending",
     },
     theme: {
       type: String,
-      enum: ['dark', 'light'],
-      default: 'dark'
+      enum: ["dark", "light"],
+      default: "dark",
     },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true
+      ref: "User",
+      required: true,
     },
     createdByName: {
       type: String,
-      required: true
+      required: true,
     },
     updatedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
+      ref: "User",
     },
     updatedByName: {
-      type: String
+      type: String,
     },
     lastUpdatedAt: {
-      type: Date
-    }
+      type: Date,
+    },
   },
   { timestamps: true }
 );

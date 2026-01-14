@@ -45,17 +45,15 @@ class VideoGenerator {
     const canvas = createCanvas(this.width, this.height);
     const ctx = canvas.getContext("2d");
     const colors = this.themes[theme] || this.themes.dark;
-    
-    // Build the logical timeline (stays and travels without emergencies)
     let logicalTimeline = [];
     let logicalTime = 0;
 
     for (let i = 0; i < stops.length; i++) {
       const stop = stops[i];
+      const isLastStop = i === stops.length - 1;
 
-      // betweenSeconds = time to stay at this stop (time until departure)
       const stayAtStopDuration = Number(stop.betweenSeconds) || 0;
-      if (stayAtStopDuration > 0) {
+      if (!isLastStop && stayAtStopDuration > 0) {
         logicalTimeline.push({
           type: "stay",
           stopIndex: i,
@@ -66,9 +64,8 @@ class VideoGenerator {
         logicalTime += stayAtStopDuration;
       }
 
-      // staySeconds = travel time from this stop to the next stop
       const travelToNextStopDuration = Number(stop.staySeconds) || 0;
-      if (i < stops.length - 1 && travelToNextStopDuration > 0) {
+      if (!isLastStop && i < stops.length - 1 && travelToNextStopDuration > 0) {
         logicalTimeline.push({
           type: "travel",
           stopIndex: i,
@@ -81,7 +78,6 @@ class VideoGenerator {
       }
     }
 
-    // Collect and sort emergencies by logical time
     let emergencies = [];
     for (let i = 0; i < stops.length; i++) {
       const stop = stops[i];
@@ -117,16 +113,19 @@ class VideoGenerator {
       // Check if any emergency interrupts this phase
       while (emergencyIndex < emergencies.length) {
         const emergency = emergencies[emergencyIndex];
-        
+
         if (emergency.logicalStart >= phaseLogicalEnd) {
           // Emergency is after this phase
           break;
         }
-        
-        if (emergency.logicalStart >= phaseLogicalStart && emergency.logicalStart < phaseLogicalEnd) {
+
+        if (
+          emergency.logicalStart >= phaseLogicalStart &&
+          emergency.logicalStart < phaseLogicalEnd
+        ) {
           // Emergency interrupts this phase
           const beforeEmergency = emergency.logicalStart - phaseLogicalStart;
-          
+
           // Add the part before emergency (if any)
           if (beforeEmergency > 0) {
             timeline.push({
@@ -143,7 +142,7 @@ class VideoGenerator {
             phaseElapsed += beforeEmergency;
             phaseLogicalStart += beforeEmergency;
           }
-          
+
           // Add emergency
           timeline.push({
             type: "emergency",
@@ -178,17 +177,15 @@ class VideoGenerator {
       }
     }
 
-    // Debug: Log timeline for verification
     if (elapsedSeconds === 0) {
-      console.log('Timeline built:', timeline.map(p => ({
+      timeline.map((p) => ({
         type: p.type,
         start: p.startTime,
         end: p.endTime,
-        text: p.emergencyText || 'N/A'
-      })));
+        text: p.emergencyText || "N/A",
+      }));
     }
 
-    // Find active phase at current time
     let currentPhase = timeline[0];
     for (const phase of timeline) {
       if (elapsedSeconds >= phase.startTime && elapsedSeconds < phase.endTime) {
@@ -197,7 +194,6 @@ class VideoGenerator {
       }
     }
 
-    // Safety check
     if (!currentPhase && timeline.length > 0) {
       currentPhase = timeline[timeline.length - 1];
     }
@@ -233,9 +229,21 @@ class VideoGenerator {
     ctx.textAlign = "left";
     ctx.fillText(`${currentStopData.name}`, 251, 116);
     ctx.textAlign = "right";
-    const remainingTime = currentPhase ? Math.ceil(currentPhase.endTime - elapsedSeconds) : 0;
-
+    let departureTime = 0;
     if (currentPhase && currentPhase.type === "stay") {
+      const currentStopStayPhases = timeline.filter(
+        (p) => p.type === "stay" && p.stopIndex === currentStopIndex
+      );
+      if (currentStopStayPhases.length > 0) {
+        const lastStayPhase =
+          currentStopStayPhases[currentStopStayPhases.length - 1];
+        departureTime = lastStayPhase.endTime;
+      }
+
+      const remainingTime = Math.max(
+        0,
+        Math.ceil(departureTime - elapsedSeconds)
+      );
       ctx.fillStyle = colors.departure;
       ctx.font = "bold 48px Arial";
       ctx.fillText(
@@ -365,16 +373,23 @@ class VideoGenerator {
       for (let i = 0; i < visibleStopsCount; i++) {
         const actualIndex = nextStopStartIndex + i;
         const y = visibleStopsCount === 1 ? startY : startY + i * stopSpacing;
+        let arrivalTime = 0;
+        const travelToStop = timeline.find(
+          (p) => p.type === "travel" && p.nextStopIndex === actualIndex
+        );
 
-        let remainingTime = 0;
-        for (const phase of timeline) {
-          if (phase.type === "stay" && phase.stopIndex === actualIndex) {
-            remainingTime = phase.startTime - elapsedSeconds;
-            break;
+        if (travelToStop) {
+          arrivalTime = travelToStop.endTime;
+        } else {
+          const firstStayAtStop = timeline.find(
+            (p) => p.type === "stay" && p.stopIndex === actualIndex
+          );
+          if (firstStayAtStop) {
+            arrivalTime = firstStayAtStop.startTime;
           }
         }
 
-        if (remainingTime < 0) remainingTime = 0;
+        let remainingTime = Math.max(0, arrivalTime - elapsedSeconds);
 
         ctx.fillStyle = colors.text;
         ctx.beginPath();
@@ -413,15 +428,32 @@ class VideoGenerator {
       ctx.textAlign = "left";
       const finalStopName = stops[stops.length - 1].name;
       ctx.fillText(finalStopName, 120, bottomBarY + 70);
+      const lastStopIndex = stops.length - 1;
+      let arrivalTimeAtFinalStop = 0;
 
-      const lastStayPhase = timeline.filter((p) => p.type === "stay").pop();
-      const remainingTimeToFinalStop = lastStayPhase
-        ? lastStayPhase.startTime - elapsedSeconds
-        : 0;
-      const remainingSecondsToFinalStop = Math.max(
-        0,
-        Math.ceil(remainingTimeToFinalStop)
+      const travelToLastStop = timeline.find(
+        (p) => p.type === "travel" && p.nextStopIndex === lastStopIndex
       );
+
+      if (travelToLastStop) {
+        arrivalTimeAtFinalStop = travelToLastStop.endTime;
+      } else {
+        const firstStayAtLastStop = timeline.find(
+          (p) => p.type === "stay" && p.stopIndex === lastStopIndex
+        );
+        if (firstStayAtLastStop) {
+          arrivalTimeAtFinalStop = firstStayAtLastStop.startTime;
+        } else {
+          arrivalTimeAtFinalStop =
+            timeline.length > 0 ? timeline[timeline.length - 1].endTime : 0;
+        }
+      }
+
+      const remainingTimeToFinalStop = Math.max(
+        0,
+        arrivalTimeAtFinalStop - elapsedSeconds
+      );
+      const remainingSecondsToFinalStop = Math.ceil(remainingTimeToFinalStop);
 
       ctx.font = "bold 56px Arial";
       ctx.textAlign = "right";
@@ -452,22 +484,22 @@ class VideoGenerator {
         scenario.stops[scenario.stops.length - 1].name;
 
       let totalDuration = 0;
-      
-      // Calculate normal timeline duration
+
       for (let i = 0; i < stops.length; i++) {
-        // betweenSeconds = time to stay at this stop
+        const isLastStop = i === stops.length - 1;
+
         const stayAtStopDuration = Number(stops[i].betweenSeconds) || 0;
-        // staySeconds = travel time to next stop
         const travelToNextStopDuration = Number(stops[i].staySeconds) || 0;
 
-        totalDuration += stayAtStopDuration;
+        if (!isLastStop) {
+          totalDuration += stayAtStopDuration;
+        }
 
-        if (i < stops.length - 1) {
+        if (!isLastStop && i < stops.length - 1) {
           totalDuration += travelToNextStopDuration;
         }
       }
-      
-      // Add all emergency durations to extend video length
+
       for (let i = 0; i < stops.length; i++) {
         if (stops[i].emergencies && Array.isArray(stops[i].emergencies)) {
           for (const emergency of stops[i].emergencies) {
