@@ -1,7 +1,9 @@
 const { createCanvas } = require("canvas");
 const ffmpeg = require("fluent-ffmpeg");
+const ffmpegPath = require("ffmpeg-static");
 const fs = require("fs");
 const path = require("path");
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 class VideoGenerator {
   constructor() {
@@ -35,7 +37,10 @@ class VideoGenerator {
   }
 
   async generateStopFrame(
+    currentStop,
+    totalStops,
     stops,
+    routeName,
     elapsedSeconds,
     theme = "dark"
   ) {
@@ -189,30 +194,38 @@ class VideoGenerator {
     const currentStopIndex = currentPhase ? currentPhase.stopIndex : 0;
     const displayStopIndex = currentStopIndex;
     const currentStopData = stops[displayStopIndex];
+    if (!currentStopData) {
+      const canvas = createCanvas(this.width, this.height);
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = colors.background;
+      ctx.fillRect(0, 0, this.width, this.height);
+      return canvas.toBuffer("image/png");
+    }
 
     ctx.fillStyle = colors.background;
     ctx.fillRect(0, 0, this.width, this.height);
-    const headerHeight = 120;
-    ctx.fillStyle = colors.header;
-    ctx.fillRect(50, 50, this.width - 100, headerHeight);
-    ctx.fillStyle = colors.accent;
-    ctx.beginPath();
-    ctx.moveTo(106, 66);
-    ctx.lineTo(166, 66);
-    ctx.lineTo(196, 110);
-    ctx.lineTo(166, 154);
-    ctx.lineTo(106, 154);
-    ctx.lineTo(76, 110);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = colors.text;
-    ctx.font = "bold 70px Arial";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("M", 136, 110);
     
     if (!isEmergency) {
+      const headerHeight = 120;
+      ctx.fillStyle = colors.header;
+      ctx.fillRect(50, 50, this.width - 100, headerHeight);
+      ctx.fillStyle = colors.accent;
+      ctx.beginPath();
+      ctx.moveTo(106, 66);
+      ctx.lineTo(166, 66);
+      ctx.lineTo(196, 110);
+      ctx.lineTo(166, 154);
+      ctx.lineTo(106, 154);
+      ctx.lineTo(76, 110);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = colors.text;
+      ctx.font = "bold 70px Arial";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("M", 136, 110);
+      
       ctx.fillStyle = colors.text;
       ctx.font = "bold 56px Arial";
       ctx.textAlign = "left";
@@ -227,21 +240,22 @@ class VideoGenerator {
         const lastStayPhase = currentStopStayPhases[currentStopStayPhases.length - 1];
         const departureTime = lastStayPhase.endTime;
         const remainingTime = Math.max(0, Math.ceil(departureTime - elapsedSeconds));
-        
-        ctx.fillStyle = colors.departure;
-        ctx.font = "bold 48px Arial";
-        ctx.fillText(
-          `Departure in: ${this.formatTime(remainingTime)}`,
-          this.width - 120,
-          116
-        );
+        if (remainingTime > 0) {
+          ctx.fillStyle = colors.departure;
+          ctx.font = "bold 48px Arial";
+          ctx.fillText(
+            `Departure in: ${this.formatTime(remainingTime)}`,
+            this.width - 120,
+            116
+          );
+        }
       }
     }
 
     if (isEmergency) {
       const emergencyMessage = currentPhase.emergencyText || "EMERGENCY";
-      const emergencyY = 180;
-      const emergencyHeight = this.height - emergencyY - 50;
+      const emergencyY = 0;
+      const emergencyHeight = this.height;
 
       const pulseIntensity = Math.abs(Math.sin(elapsedSeconds * 3)) * 0.3 + 0.7;
       const gradient = ctx.createLinearGradient(
