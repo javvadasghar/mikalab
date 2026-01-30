@@ -3,6 +3,7 @@ const ffmpeg = require("fluent-ffmpeg");
 const ffmpegPath = require("ffmpeg-static");
 const fs = require("fs");
 const path = require("path");
+const gtts = require("gtts");
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 class VideoGenerator {
@@ -36,13 +37,178 @@ class VideoGenerator {
     return `${mins} Min.`;
   }
 
+  async generateAudioAnnouncement(text, outputPath) {
+    return new Promise((resolve, reject) => {
+      try {
+        const speech = new gtts(text, "en");
+        speech.save(outputPath, (err) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(outputPath);
+          }
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  async createAudioTimeline(stops, tempDir) {
+    const audioFiles = [];
+    let currentTime = 0;
+
+    for (let i = 0; i < stops.length; i++) {
+      const stop = stops[i];
+      const isLastStop = i === stops.length - 1;
+
+      if (i > 0 && !isLastStop) {
+        const nextStop = stops[i + 1];
+        const announcementText = `Next stop, ${nextStop.name}`;
+
+        const audioPath = path.join(tempDir, `announcement_${i}.mp3`);
+
+        try {
+          await this.generateAudioAnnouncement(announcementText, audioPath);
+          const stayAtPreviousStop = Number(stops[i - 1].betweenSeconds) || 0;
+          const travelDuration = Number(stops[i - 1].staySeconds) || 0;
+          const arrivalTime = currentTime + stayAtPreviousStop + travelDuration;
+          const announcementOffset = Math.max(0, arrivalTime - 3);
+
+          audioFiles.push({
+            path: audioPath,
+            startTime: announcementOffset,
+            stopName: nextStop.name,
+            stopIndex: i,
+          });
+        } catch (error) {
+          console.error(
+            `Error generating audio for stop ${nextStop.name}:`,
+            error,
+          );
+        }
+      }
+
+      if (i === stops.length - 1 && i > 0) {
+        const announcementText = `Arriving at final stop, ${stop.name}`;
+        const audioPath = path.join(tempDir, `announcement_final.mp3`);
+
+        try {
+          await this.generateAudioAnnouncement(announcementText, audioPath);
+
+          const stayAtPreviousStop = Number(stops[i - 1].betweenSeconds) || 0;
+          const travelDuration = Number(stops[i - 1].staySeconds) || 0;
+          const arrivalTime = currentTime + stayAtPreviousStop + travelDuration;
+          const announcementOffset = Math.max(0, arrivalTime - 3);
+
+          audioFiles.push({
+            path: audioPath,
+            startTime: announcementOffset,
+            stopName: stop.name,
+            stopIndex: i,
+          });
+        } catch (error) {
+          console.error(
+            `Error generating final stop audio for ${stop.name}:`,
+            error,
+          );
+        }
+      }
+
+      if (!isLastStop) {
+        currentTime += Number(stop.betweenSeconds) || 0;
+        currentTime += Number(stop.staySeconds) || 0;
+      }
+
+      if (stop.emergencies && Array.isArray(stop.emergencies)) {
+        for (let j = 0; j < stop.emergencies.length; j++) {
+          const emergency = stop.emergencies[j];
+          const emergencyText = emergency.text || "Emergency alert";
+          const audioPath = path.join(tempDir, `emergency_${i}_${j}.mp3`);
+
+          try {
+            await this.generateAudioAnnouncement(
+              `Attention! ${emergencyText}`,
+              audioPath,
+            );
+
+            const emergencyStartTime = Number(emergency.startSecond) || 0;
+            audioFiles.push({
+              path: audioPath,
+              startTime: emergencyStartTime,
+              stopName: stop.name,
+              stopIndex: i,
+              isEmergency: true,
+            });
+          } catch (error) {
+            console.error(`Error generating emergency audio:`, error);
+          }
+        }
+      }
+    }
+
+    return audioFiles;
+  }
+
+  async mergeAudioFiles(audioFiles, totalDuration, outputPath) {
+    if (audioFiles.length === 0) {
+      return null;
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        // Create a filter complex to overlay multiple audio files at different times
+        const filterComplex = [];
+        const inputs = [`anullsrc=r=44100:cl=stereo:d=${totalDuration}`];
+
+        audioFiles.forEach((audio, index) => {
+          const delay = Math.floor(audio.startTime * 1000); // Convert to milliseconds
+          filterComplex.push(
+            `[${index + 1}:a]adelay=${delay}|${delay}[a${index}]`,
+          );
+        });
+
+        // Mix all audio streams together
+        const mixInputs = filterComplex
+          .map((_, index) => `[a${index}]`)
+          .join("");
+        filterComplex.push(
+          `[0:a]${mixInputs}amix=inputs=${audioFiles.length + 1}:duration=longest[outa]`,
+        );
+
+        const command = ffmpeg();
+
+        // Add silent audio as base
+        command
+          .input(`anullsrc=r=44100:cl=stereo:d=${totalDuration}`)
+          .inputFormat("lavfi");
+
+        // Add all audio files
+        audioFiles.forEach((audio) => {
+          command.input(audio.path);
+        });
+
+        command
+          .complexFilter(filterComplex)
+          .outputOptions(["-map", "[outa]"])
+          .audioCodec("aac")
+          .output(outputPath)
+          .on("end", () => resolve(outputPath))
+          .on("error", (err) => reject(err))
+          .run();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
   async generateStopFrame(
     currentStop,
     totalStops,
     stops,
     routeName,
     elapsedSeconds,
-    theme = "dark"
+    theme = "dark",
   ) {
     const canvas = createCanvas(this.width, this.height);
     const ctx = canvas.getContext("2d");
@@ -204,7 +370,7 @@ class VideoGenerator {
 
     ctx.fillStyle = colors.background;
     ctx.fillRect(0, 0, this.width, this.height);
-    
+
     if (!isEmergency) {
       const headerHeight = 120;
       ctx.fillStyle = colors.header;
@@ -225,28 +391,32 @@ class VideoGenerator {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText("M", 136, 110);
-      
+
       ctx.fillStyle = colors.text;
       ctx.font = "bold 56px Arial";
       ctx.textAlign = "left";
       ctx.fillText(`${currentStopData.name}`, 251, 116);
       ctx.textAlign = "right";
-      
+
       const currentStopStayPhases = timeline.filter(
-        (p) => p.type === "stay" && p.stopIndex === currentStopIndex
+        (p) => p.type === "stay" && p.stopIndex === currentStopIndex,
       );
-      
+
       if (currentStopStayPhases.length > 0) {
-        const lastStayPhase = currentStopStayPhases[currentStopStayPhases.length - 1];
+        const lastStayPhase =
+          currentStopStayPhases[currentStopStayPhases.length - 1];
         const departureTime = lastStayPhase.endTime;
-        const remainingTime = Math.max(0, Math.ceil(departureTime - elapsedSeconds));
+        const remainingTime = Math.max(
+          0,
+          Math.ceil(departureTime - elapsedSeconds),
+        );
         if (remainingTime > 0) {
           ctx.fillStyle = colors.departure;
           ctx.font = "bold 48px Arial";
           ctx.fillText(
             `Departure in: ${this.formatTime(remainingTime)}`,
             this.width - 120,
-            116
+            116,
           );
         }
       }
@@ -262,7 +432,7 @@ class VideoGenerator {
         0,
         emergencyY,
         0,
-        emergencyY + emergencyHeight
+        emergencyY + emergencyHeight,
       );
       gradient.addColorStop(0, `rgba(220, 38, 38, ${pulseIntensity})`);
       gradient.addColorStop(0.5, `rgba(185, 28, 28, ${pulseIntensity})`);
@@ -288,7 +458,7 @@ class VideoGenerator {
         20,
         emergencyY + 20,
         this.width - 40,
-        emergencyHeight - 40
+        emergencyHeight - 40,
       );
 
       ctx.strokeStyle = `rgba(255, 255, 0, ${flashIntensity * 0.8})`;
@@ -297,7 +467,7 @@ class VideoGenerator {
         35,
         emergencyY + 35,
         this.width - 70,
-        emergencyHeight - 70
+        emergencyHeight - 70,
       );
 
       const iconSize = 100 + Math.sin(elapsedSeconds * 5) * 20;
@@ -347,7 +517,7 @@ class VideoGenerator {
       const nextStopStartIndex = displayStopIndex + 1;
       const visibleStops = stops.slice(
         nextStopStartIndex,
-        nextStopStartIndex + 3
+        nextStopStartIndex + 3,
       );
       const visibleStopsCount = visibleStops.length;
 
@@ -374,15 +544,16 @@ class VideoGenerator {
         const y = visibleStopsCount === 1 ? startY : startY + i * stopSpacing;
         let arrivalTime = 0;
         const travelPhasesToStop = timeline.filter(
-          (p) => p.type === "travel" && p.nextStopIndex === actualIndex
+          (p) => p.type === "travel" && p.nextStopIndex === actualIndex,
         );
 
         if (travelPhasesToStop.length > 0) {
-          const lastTravelPhase = travelPhasesToStop[travelPhasesToStop.length - 1];
+          const lastTravelPhase =
+            travelPhasesToStop[travelPhasesToStop.length - 1];
           arrivalTime = lastTravelPhase.endTime;
         } else {
           const firstStayAtStop = timeline.find(
-            (p) => p.type === "stay" && p.stopIndex === actualIndex
+            (p) => p.type === "stay" && p.stopIndex === actualIndex,
           );
           if (firstStayAtStop) {
             arrivalTime = firstStayAtStop.startTime;
@@ -431,15 +602,16 @@ class VideoGenerator {
       const lastStopIndex = stops.length - 1;
       let arrivalTimeAtFinalStop = 0;
       const travelPhasesToLastStop = timeline.filter(
-        (p) => p.type === "travel" && p.nextStopIndex === lastStopIndex
+        (p) => p.type === "travel" && p.nextStopIndex === lastStopIndex,
       );
 
       if (travelPhasesToLastStop.length > 0) {
-        const lastTravelPhase = travelPhasesToLastStop[travelPhasesToLastStop.length - 1];
+        const lastTravelPhase =
+          travelPhasesToLastStop[travelPhasesToLastStop.length - 1];
         arrivalTimeAtFinalStop = lastTravelPhase.endTime;
       } else {
         const firstStayAtLastStop = timeline.find(
-          (p) => p.type === "stay" && p.stopIndex === lastStopIndex
+          (p) => p.type === "stay" && p.stopIndex === lastStopIndex,
         );
         if (firstStayAtLastStop) {
           arrivalTimeAtFinalStop = firstStayAtLastStop.startTime;
@@ -451,7 +623,7 @@ class VideoGenerator {
 
       const remainingTimeToFinalStop = Math.max(
         0,
-        arrivalTimeAtFinalStop - elapsedSeconds
+        arrivalTimeAtFinalStop - elapsedSeconds,
       );
       const remainingSecondsToFinalStop = Math.ceil(remainingTimeToFinalStop);
 
@@ -460,7 +632,7 @@ class VideoGenerator {
       ctx.fillText(
         this.formatTime(remainingSecondsToFinalStop),
         this.width - 120,
-        bottomBarY + 70
+        bottomBarY + 70,
       );
       ctx.textAlign = "left";
     }
@@ -511,6 +683,11 @@ class VideoGenerator {
 
       const totalFrames = totalDuration * this.fps;
 
+      console.log("Generating audio announcements...");
+      const audioFiles = await this.createAudioTimeline(stops, tempDir);
+      console.log(`Generated ${audioFiles.length} audio announcements`);
+
+      console.log("Generating video frames...");
       for (let frame = 0; frame < totalFrames; frame++) {
         const elapsedSeconds = frame / this.fps;
 
@@ -520,35 +697,60 @@ class VideoGenerator {
           stops,
           routeName,
           elapsedSeconds,
-          scenario.theme || "dark"
+          scenario.theme || "dark",
         );
 
         const framePath = path.join(
           tempDir,
-          `frame_${String(frameIndex).padStart(6, "0")}.png`
+          `frame_${String(frameIndex).padStart(6, "0")}.png`,
         );
         fs.writeFileSync(framePath, frameBuffer);
         frameIndex++;
       }
 
-      return new Promise((resolve, reject) => {
+      const videoOnlyPath = path.join(tempDir, "video_only.mp4");
+      const mergedAudioPath = path.join(tempDir, "merged_audio.aac");
+
+      console.log("Creating video from frames...");
+      await new Promise((resolve, reject) => {
         ffmpeg()
           .input(path.join(tempDir, "frame_%06d.png"))
           .inputFPS(this.fps)
           .videoCodec("libx264")
           .outputOptions(["-pix_fmt yuv420p", "-preset ultrafast", "-crf 23"])
-          .output(outputPath)
-          .on("end", () => {
-            fs.rmSync(tempDir, { recursive: true, force: true });
-            resolve(outputPath);
-          })
-          .on("error", (err) => {
-            fs.rmSync(tempDir, { recursive: true, force: true });
-            reject(err);
-          })
+          .output(videoOnlyPath)
+          .on("end", () => resolve(videoOnlyPath))
+          .on("error", (err) => reject(err))
           .run();
       });
+
+      // Merge audio files if any exist
+      if (audioFiles.length > 0) {
+        console.log("Merging audio announcements...");
+        await this.mergeAudioFiles(audioFiles, totalDuration, mergedAudioPath);
+
+        console.log("Combining video with audio...");
+        await new Promise((resolve, reject) => {
+          ffmpeg()
+            .input(videoOnlyPath)
+            .input(mergedAudioPath)
+            .outputOptions(["-c:v copy", "-c:a aac", "-shortest"])
+            .output(outputPath)
+            .on("end", () => resolve(outputPath))
+            .on("error", (err) => reject(err))
+            .run();
+        });
+      } else {
+        // No audio, just copy the video
+        fs.copyFileSync(videoOnlyPath, outputPath);
+      }
+
+      console.log("Cleaning up temporary files...");
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      console.log("Video generation complete!");
+      return outputPath;
     } catch (error) {
+      console.error("Error in generateVideo:", error);
       fs.rmSync(tempDir, { recursive: true, force: true });
       throw error;
     }
