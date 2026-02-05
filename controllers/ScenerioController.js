@@ -8,8 +8,8 @@ let isProcessingQueue = false;
 
 const calculateScenarioDuration = (stops) => {
   return stops.reduce((total, stop) => {
-    const stay = Number(stop.staySeconds) || 0;
-    const between = Number(stop.betweenSeconds) || 0;
+    const stay = Number(stop.travelTimeToNextStop) || 0;
+    const between = Number(stop.stayTimeAtStop) || 0;
     const primaryEmergency = stop.emergencyEnabled
       ? Number(stop.emergencySeconds) || 0
       : 0;
@@ -93,13 +93,13 @@ const createScenario = async (req, res) => {
     }
 
     const processedStops = stops.map((stop, index) => {
-      const staySeconds = Number(stop.staySeconds) || 0;
-      const betweenSeconds = Number(stop.betweenSeconds) || 0;
+      const travelTimeToNextStop = Number(stop.travelTimeToNextStop) || 0;
+      const stayTimeAtStop = Number(stop.stayTimeAtStop) || 0;
 
       return {
         name: stop.name || `Stop ${index + 1}`,
-        staySeconds: staySeconds,
-        betweenSeconds: betweenSeconds,
+        travelTimeToNextStop: travelTimeToNextStop,
+        stayTimeAtStop: stayTimeAtStop,
         emergencyEnabled:
           !!(stop.emergencies && stop.emergencies.length > 0) ||
           !!stop.emergencyEnabled,
@@ -242,13 +242,13 @@ const updateScenario = async (req, res) => {
     }
 
     const processedStops = stops.map((stop, index) => {
-      const staySeconds = Number(stop.staySeconds) || 0;
-      const betweenSeconds = Number(stop.betweenSeconds) || 0;
+      const travelTimeToNextStop = Number(stop.travelTimeToNextStop) || 0;
+      const stayTimeAtStop = Number(stop.stayTimeAtStop) || 0;
 
       return {
         name: stop.name || `Stop ${index + 1}`,
-        staySeconds: staySeconds,
-        betweenSeconds: betweenSeconds,
+        travelTimeToNextStop: travelTimeToNextStop,
+        stayTimeAtStop: stayTimeAtStop,
         emergencyEnabled:
           !!(stop.emergencies && stop.emergencies.length > 0) ||
           !!stop.emergencyEnabled,
@@ -267,8 +267,8 @@ const updateScenario = async (req, res) => {
       JSON.stringify(
         stops.map((s) => ({
           name: s.name,
-          staySeconds: s.staySeconds,
-          betweenSeconds: s.betweenSeconds,
+          travelTimeToNextStop: s.travelTimeToNextStop,
+          stayTimeAtStop: s.stayTimeAtStop,
           emergencies: s.emergencies,
         }))
       );

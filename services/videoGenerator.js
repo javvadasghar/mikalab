@@ -56,70 +56,79 @@ class VideoGenerator {
 
   async createAudioTimeline(stops, tempDir) {
     const audioFiles = [];
+    const emergencyAudioFiles = [];
     let currentTime = 0;
+
+    const emergencyTimes = [];
+    for (let i = 0; i < stops.length; i++) {
+      const stop = stops[i];
+      if (stop.emergencies && Array.isArray(stop.emergencies)) {
+        for (const emergency of stop.emergencies) {
+          const emergencyStartTime = Number(emergency.startSecond) || 0;
+          const emergencyDuration = Number(emergency.seconds) || 0;
+          emergencyTimes.push({
+            start: emergencyStartTime,
+            end: emergencyStartTime + emergencyDuration,
+          });
+        }
+      }
+    }
+
+    const overlapsWithEmergency = (startTime, duration = 5) => {
+      const endTime = startTime + duration;
+      return emergencyTimes.some(
+        (emergency) =>
+          (startTime >= emergency.start && startTime < emergency.end) ||
+          (endTime > emergency.start && endTime <= emergency.end) ||
+          (startTime <= emergency.start && endTime >= emergency.end),
+      );
+    };
+
+    const arrivalTimes = [];
+    let accumulatedTime = 0;
+
+    for (let i = 0; i < stops.length; i++) {
+      arrivalTimes.push(accumulatedTime);
+      if (i < stops.length - 1) {
+        const stayTime = Number(stops[i].stayTimeAtStop) || 0;
+        const travelTime = Number(stops[i].travelTimeToNextStop) || 0;
+        accumulatedTime += stayTime + travelTime;
+      }
+    }
 
     for (let i = 0; i < stops.length; i++) {
       const stop = stops[i];
       const isLastStop = i === stops.length - 1;
 
-      if (i > 0 && !isLastStop) {
-        const nextStop = stops[i + 1];
-        const announcementText = `Next stop, ${nextStop.name}`;
-
-        const audioPath = path.join(tempDir, `announcement_${i}.mp3`);
-
-        try {
-          await this.generateAudioAnnouncement(announcementText, audioPath);
-          const stayAtPreviousStop = Number(stops[i - 1].betweenSeconds) || 0;
-          const travelDuration = Number(stops[i - 1].staySeconds) || 0;
-          const arrivalTime = currentTime + stayAtPreviousStop + travelDuration;
-          const announcementOffset = Math.max(0, arrivalTime - 3);
-
-          audioFiles.push({
-            path: audioPath,
-            startTime: announcementOffset,
-            stopName: nextStop.name,
-            stopIndex: i,
-          });
-        } catch (error) {
-          console.error(
-            `Error generating audio for stop ${nextStop.name}:`,
-            error,
-          );
-        }
+      if (i === 0) {
+        continue;
       }
 
-      if (i === stops.length - 1 && i > 0) {
-        const announcementText = `Arriving at final stop, ${stop.name}`;
-        const audioPath = path.join(tempDir, `announcement_final.mp3`);
+      const announcementText = isLastStop
+        ? `Arriving at final stop, ${stop.name}, Please leave the bus, thank you for riding with us.`
+        : `Next stop, ${stop.name}`;
 
-        try {
-          await this.generateAudioAnnouncement(announcementText, audioPath);
+      const audioPath = path.join(tempDir, `announcement_${i}.mp3`);
 
-          const stayAtPreviousStop = Number(stops[i - 1].betweenSeconds) || 0;
-          const travelDuration = Number(stops[i - 1].staySeconds) || 0;
-          const arrivalTime = currentTime + stayAtPreviousStop + travelDuration;
-          const announcementOffset = Math.max(0, arrivalTime - 3);
-
+      try {
+        await this.generateAudioAnnouncement(announcementText, audioPath);
+        const announcementOffset = Math.max(0, arrivalTimes[i] - 5);
+        if (!overlapsWithEmergency(announcementOffset)) {
           audioFiles.push({
             path: audioPath,
             startTime: announcementOffset,
             stopName: stop.name,
             stopIndex: i,
+            isEmergency: false,
           });
-        } catch (error) {
-          console.error(
-            `Error generating final stop audio for ${stop.name}:`,
-            error,
-          );
         }
+      } catch (error) {
+        console.error(`Error generating audio for stop ${stop.name}:`, error);
       }
+    }
 
-      if (!isLastStop) {
-        currentTime += Number(stop.betweenSeconds) || 0;
-        currentTime += Number(stop.staySeconds) || 0;
-      }
-
+    for (let i = 0; i < stops.length; i++) {
+      const stop = stops[i];
       if (stop.emergencies && Array.isArray(stop.emergencies)) {
         for (let j = 0; j < stop.emergencies.length; j++) {
           const emergency = stop.emergencies[j];
@@ -128,14 +137,16 @@ class VideoGenerator {
 
           try {
             await this.generateAudioAnnouncement(
-              `Attention! ${emergencyText}`,
+              `Emergency. ${emergencyText}. Please remain calm and wait for the further instructions. Thank you.`,
               audioPath,
             );
 
             const emergencyStartTime = Number(emergency.startSecond) || 0;
-            audioFiles.push({
+            const emergencyDuration = Number(emergency.seconds) || 0;
+            emergencyAudioFiles.push({
               path: audioPath,
               startTime: emergencyStartTime,
+              duration: emergencyDuration,
               stopName: stop.name,
               stopIndex: i,
               isEmergency: true,
@@ -147,7 +158,7 @@ class VideoGenerator {
       }
     }
 
-    return audioFiles;
+    return audioFiles.concat(emergencyAudioFiles);
   }
 
   async mergeAudioFiles(audioFiles, totalDuration, outputPath) {
@@ -157,18 +168,23 @@ class VideoGenerator {
 
     return new Promise((resolve, reject) => {
       try {
-        // Create a filter complex to overlay multiple audio files at different times
         const filterComplex = [];
         const inputs = [`anullsrc=r=44100:cl=stereo:d=${totalDuration}`];
 
         audioFiles.forEach((audio, index) => {
-          const delay = Math.floor(audio.startTime * 1000); // Convert to milliseconds
-          filterComplex.push(
-            `[${index + 1}:a]adelay=${delay}|${delay}[a${index}]`,
-          );
+          const delay = Math.floor(audio.startTime * 1000);
+          if (audio.isEmergency && audio.duration) {
+            // Trim emergency audio to specified duration
+            filterComplex.push(
+              `[${index + 1}:a]atrim=0:${audio.duration},adelay=${delay}|${delay}[a${index}]`,
+            );
+          } else {
+            filterComplex.push(
+              `[${index + 1}:a]adelay=${delay}|${delay}[a${index}]`,
+            );
+          }
         });
 
-        // Mix all audio streams together
         const mixInputs = filterComplex
           .map((_, index) => `[a${index}]`)
           .join("");
@@ -220,7 +236,7 @@ class VideoGenerator {
       const stop = stops[i];
       const isLastStop = i === stops.length - 1;
 
-      const stayAtStopDuration = Number(stop.betweenSeconds) || 0;
+      const stayAtStopDuration = Number(stop.stayTimeAtStop) || 0;
       if (!isLastStop && stayAtStopDuration > 0) {
         logicalTimeline.push({
           type: "stay",
@@ -232,7 +248,7 @@ class VideoGenerator {
         logicalTime += stayAtStopDuration;
       }
 
-      const travelToNextStopDuration = Number(stop.staySeconds) || 0;
+      const travelToNextStopDuration = Number(stop.travelTimeToNextStop) || 0;
       if (!isLastStop && i < stops.length - 1 && travelToNextStopDuration > 0) {
         logicalTimeline.push({
           type: "travel",
@@ -660,8 +676,9 @@ class VideoGenerator {
       for (let i = 0; i < stops.length; i++) {
         const isLastStop = i === stops.length - 1;
 
-        const stayAtStopDuration = Number(stops[i].betweenSeconds) || 0;
-        const travelToNextStopDuration = Number(stops[i].staySeconds) || 0;
+        const stayAtStopDuration = Number(stops[i].stayTimeAtStop) || 0;
+        const travelToNextStopDuration =
+          Number(stops[i].travelTimeToNextStop) || 0;
 
         if (!isLastStop) {
           totalDuration += stayAtStopDuration;
@@ -682,12 +699,7 @@ class VideoGenerator {
       }
 
       const totalFrames = totalDuration * this.fps;
-
-      console.log("Generating audio announcements...");
       const audioFiles = await this.createAudioTimeline(stops, tempDir);
-      console.log(`Generated ${audioFiles.length} audio announcements`);
-
-      console.log("Generating video frames...");
       for (let frame = 0; frame < totalFrames; frame++) {
         const elapsedSeconds = frame / this.fps;
 
@@ -710,8 +722,6 @@ class VideoGenerator {
 
       const videoOnlyPath = path.join(tempDir, "video_only.mp4");
       const mergedAudioPath = path.join(tempDir, "merged_audio.aac");
-
-      console.log("Creating video from frames...");
       await new Promise((resolve, reject) => {
         ffmpeg()
           .input(path.join(tempDir, "frame_%06d.png"))
@@ -724,12 +734,9 @@ class VideoGenerator {
           .run();
       });
 
-      // Merge audio files if any exist
       if (audioFiles.length > 0) {
-        console.log("Merging audio announcements...");
         await this.mergeAudioFiles(audioFiles, totalDuration, mergedAudioPath);
 
-        console.log("Combining video with audio...");
         await new Promise((resolve, reject) => {
           ffmpeg()
             .input(videoOnlyPath)
@@ -741,11 +748,9 @@ class VideoGenerator {
             .run();
         });
       } else {
-        // No audio, just copy the video
         fs.copyFileSync(videoOnlyPath, outputPath);
       }
 
-      console.log("Cleaning up temporary files...");
       fs.rmSync(tempDir, { recursive: true, force: true });
       console.log("Video generation complete!");
       return outputPath;

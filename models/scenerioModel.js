@@ -5,13 +5,13 @@ const stopSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
-  staySeconds: {
+  travelTimeToNextStop: {
     type: Number,
     required: true,
     min: 0,
-    default: 60,
+    default: 0,
   },
-  betweenSeconds: {
+  stayTimeAtStop: {
     type: Number,
     required: true,
     min: 0,

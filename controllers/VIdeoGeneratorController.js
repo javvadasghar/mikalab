@@ -71,7 +71,7 @@ class VideoGenerator {
       const stops = scenario.stops;
       for (let i = 0; i < stops.length; i++) {
         const stop = stops[i];
-        const totalFrames = stop.staySeconds * this.fps;
+        const totalFrames = stop.travelTimeToNextStop * this.fps;
 
         for (let frame = 0; frame < totalFrames; frame++) {
           const timeRemaining = Math.ceil((totalFrames - frame) / this.fps);
