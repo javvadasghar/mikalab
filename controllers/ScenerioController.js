@@ -50,8 +50,16 @@ const processVideoQueue = async () => {
         }s, Queue position: ${videoQueue.length + 1})`
       );
 
+      // Fetch fresh scenario data from database to ensure all updates are included
+      const freshScenario = await scenarioModel.findById(task.scenarioId).lean();
+      
+      if (!freshScenario) {
+        console.error(`Scenario ${task.scenarioId} not found in database`);
+        continue;
+      }
+
       const generatedVideoPath = await videoGenerator.generateVideo(
-        task.scenario,
+        freshScenario,
         task.videoPath
       );
       const generatedFileName = path.basename(generatedVideoPath);
@@ -263,21 +271,6 @@ const updateScenario = async (req, res) => {
       };
     });
 
-    const normalizeStops = (stops) =>
-      JSON.stringify(
-        stops.map((s) => ({
-          name: s.name,
-          travelTimeToNextStop: s.travelTimeToNextStop,
-          stayTimeAtStop: s.stayTimeAtStop,
-          emergencies: s.emergencies,
-        }))
-      );
-
-    const stopsChanged =
-      normalizeStops(existingScenario.stops) !== normalizeStops(processedStops);
-
-    const themeChanged = theme && existingScenario.theme !== theme;
-
     const scenario = await scenarioModel
       .findByIdAndUpdate(
         req.params.id,
@@ -288,84 +281,75 @@ const updateScenario = async (req, res) => {
           updatedBy: user.id,
           updatedByName: `${user.firstName} ${user.lastName}`,
           lastUpdatedAt: new Date(),
-          ...((stopsChanged || themeChanged) && { videoStatus: "generating" }),
+          videoStatus: "generating",
         },
         { new: true }
       )
       .populate("createdBy", "firstName lastName email")
       .populate("updatedBy", "firstName lastName email");
 
-    const needsVideoRegeneration = stopsChanged || themeChanged;
-
     res.status(200).json({
       success: true,
-      message: needsVideoRegeneration
-        ? "Scenario updated successfully. Video will be regenerated shortly."
-        : "Scenario updated successfully.",
+      message: "Scenario updated successfully. Video will be regenerated shortly.",
       scenario: scenario,
-      videoRegenerated: needsVideoRegeneration,
+      videoRegenerated: true,
     });
 
-    if (needsVideoRegeneration) {
-      const videosDir = path.join(__dirname, "../videos");
-      const deleteOldVideos = async () => {
-        const maxRetries = 3;
-        const retryDelay = 1000;
+    // Always regenerate video on update
+    const videosDir = path.join(__dirname, "../videos");
+    const deleteOldVideos = async () => {
+      const maxRetries = 3;
+      const retryDelay = 1000;
 
-        if (fs.existsSync(videosDir)) {
-          const files = fs.readdirSync(videosDir);
-          const scenarioPattern = `scenario_${scenario._id}`;
+      if (fs.existsSync(videosDir)) {
+        const files = fs.readdirSync(videosDir);
+        const scenarioPattern = `scenario_${scenario._id}`;
 
-          for (const file of files) {
-            if (file.startsWith(scenarioPattern) && file.endsWith(".mp4")) {
-              let attempts = 0;
-              while (attempts < maxRetries) {
-                try {
-                  await new Promise((resolve) =>
-                    setTimeout(resolve, retryDelay * attempts)
+        for (const file of files) {
+          if (file.startsWith(scenarioPattern) && file.endsWith(".mp4")) {
+            let attempts = 0;
+            while (attempts < maxRetries) {
+              try {
+                await new Promise((resolve) =>
+                  setTimeout(resolve, retryDelay * attempts)
+                );
+                fs.unlinkSync(path.join(videosDir, file));
+                break;
+              } catch (err) {
+                attempts++;
+                if (attempts >= maxRetries) {
+                  console.error(
+                    `Failed to delete ${file} after ${maxRetries} attempts: ${err.message}`
                   );
-                  fs.unlinkSync(path.join(videosDir, file));
-                  break;
-                } catch (err) {
-                  attempts++;
-                  if (attempts >= maxRetries) {
-                    console.error(
-                      `Failed to delete ${file} after ${maxRetries} attempts: ${err.message}`
-                    );
-                  }
                 }
               }
             }
           }
         }
-      };
-      setImmediate(() => deleteOldVideos());
+      }
+    };
+    setImmediate(() => deleteOldVideos());
 
-      const videoFileName = `scenario_${scenario._id}.mp4`;
-      const videoPath = path.join(videosDir, videoFileName);
-      const duration = calculateScenarioDuration(processedStops);
+    const videoFileName = `scenario_${scenario._id}.mp4`;
+    const videoPath = path.join(videosDir, videoFileName);
+    const duration = calculateScenarioDuration(processedStops);
 
-      videoQueue = videoQueue.filter(
-        (task) => task.scenarioId.toString() !== scenario._id.toString()
-      );
+    videoQueue = videoQueue.filter(
+      (task) => task.scenarioId.toString() !== scenario._id.toString()
+    );
 
-      videoQueue.push({
-        scenarioId: scenario._id,
-        scenario: scenario,
-        videoPath: videoPath,
-        videoFileName: videoFileName,
-        duration: duration,
-      });
+    videoQueue.push({
+      scenarioId: scenario._id,
+      scenario: scenario,
+      videoPath: videoPath,
+      videoFileName: videoFileName,
+      duration: duration,
+    });
 
-      console.log(
-        `Scenario ${scenario._id} updated by ${user.firstName} ${user.lastName} (Duration: ${duration}s, Queue size: ${videoQueue.length})`
-      );
-      setImmediate(() => processVideoQueue());
-    } else {
-      console.log(
-        `Scenario ${scenario._id} updated by ${user.firstName} ${user.lastName} but video not regenerated (stops unchanged)`
-      );
-    }
+    console.log(
+      `Scenario ${scenario._id} updated by ${user.firstName} ${user.lastName} (Duration: ${duration}s, Queue size: ${videoQueue.length})`
+    );
+    setImmediate(() => processVideoQueue());
   } catch (err) {
     console.log("Error:", err);
     res.status(500).json({

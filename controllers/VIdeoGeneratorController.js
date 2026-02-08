@@ -7,7 +7,7 @@ class VideoGenerator {
   constructor() {
     this.width = 1920;
     this.height = 1080;
-    this.fps = 10;
+    this.fps = 0.05;
   }
 
   async generateStopFrame(stopName, currentStop, totalStops, timeRemaining) {

@@ -10,7 +10,7 @@ class VideoGenerator {
   constructor() {
     this.width = 1920;
     this.height = 1080;
-    this.fps = 1;
+    this.fps = 0.5;
 
     this.themes = {
       dark: {
@@ -57,43 +57,53 @@ class VideoGenerator {
   async createAudioTimeline(stops, tempDir) {
     const audioFiles = [];
     const emergencyAudioFiles = [];
-    let currentTime = 0;
 
-    const emergencyTimes = [];
+    let logicalTime = 0;
+    const stopArrivalTimes = [0];
+
+    for (let i = 0; i < stops.length; i++) {
+      const stop = stops[i];
+      const isLastStop = i === stops.length - 1;
+
+      if (!isLastStop) {
+        const stayTime = Number(stop.stayTimeAtStop) || 0;
+        const travelTime = Number(stop.travelTimeToNextStop) || 0;
+        logicalTime += stayTime + travelTime;
+        stopArrivalTimes.push(logicalTime);
+      }
+    }
+
+    const emergencies = [];
     for (let i = 0; i < stops.length; i++) {
       const stop = stops[i];
       if (stop.emergencies && Array.isArray(stop.emergencies)) {
         for (const emergency of stop.emergencies) {
-          const emergencyStartTime = Number(emergency.startSecond) || 0;
+          const emergencyStart = Number(emergency.startSecond) || 0;
           const emergencyDuration = Number(emergency.seconds) || 0;
-          emergencyTimes.push({
-            start: emergencyStartTime,
-            end: emergencyStartTime + emergencyDuration,
-          });
+          if (emergencyDuration > 0) {
+            emergencies.push({
+              logicalStart: emergencyStart,
+              duration: emergencyDuration,
+              text: emergency.text || "Emergency alert",
+              stopIndex: i,
+            });
+          }
         }
       }
     }
+    emergencies.sort((a, b) => a.logicalStart - b.logicalStart);
+    const physicalArrivalTimes = [];
+    for (let i = 0; i < stopArrivalTimes.length; i++) {
+      let logicalArrival = stopArrivalTimes[i];
+      let addedTime = 0;
 
-    const overlapsWithEmergency = (startTime, duration = 5) => {
-      const endTime = startTime + duration;
-      return emergencyTimes.some(
-        (emergency) =>
-          (startTime >= emergency.start && startTime < emergency.end) ||
-          (endTime > emergency.start && endTime <= emergency.end) ||
-          (startTime <= emergency.start && endTime >= emergency.end),
-      );
-    };
-
-    const arrivalTimes = [];
-    let accumulatedTime = 0;
-
-    for (let i = 0; i < stops.length; i++) {
-      arrivalTimes.push(accumulatedTime);
-      if (i < stops.length - 1) {
-        const stayTime = Number(stops[i].stayTimeAtStop) || 0;
-        const travelTime = Number(stops[i].travelTimeToNextStop) || 0;
-        accumulatedTime += stayTime + travelTime;
+      for (const emergency of emergencies) {
+        if (emergency.logicalStart < logicalArrival) {
+          addedTime += emergency.duration;
+        }
       }
+
+      physicalArrivalTimes.push(logicalArrival + addedTime);
     }
 
     for (let i = 0; i < stops.length; i++) {
@@ -112,49 +122,49 @@ class VideoGenerator {
 
       try {
         await this.generateAudioAnnouncement(announcementText, audioPath);
-        const announcementOffset = Math.max(0, arrivalTimes[i] - 5);
-        if (!overlapsWithEmergency(announcementOffset)) {
-          audioFiles.push({
-            path: audioPath,
-            startTime: announcementOffset,
-            stopName: stop.name,
-            stopIndex: i,
-            isEmergency: false,
-          });
-        }
+        const physicalArrival = physicalArrivalTimes[i];
+        const announcementTime = Math.max(0, physicalArrival - 5);
+        audioFiles.push({
+          path: audioPath,
+          startTime: announcementTime,
+          stopName: stop.name,
+          stopIndex: i,
+          isEmergency: false,
+        });
       } catch (error) {
         console.error(`Error generating audio for stop ${stop.name}:`, error);
       }
     }
+    for (const emergency of emergencies) {
+      const audioPath = path.join(
+        tempDir,
+        `emergency_${emergency.stopIndex}.mp3`,
+      );
 
-    for (let i = 0; i < stops.length; i++) {
-      const stop = stops[i];
-      if (stop.emergencies && Array.isArray(stop.emergencies)) {
-        for (let j = 0; j < stop.emergencies.length; j++) {
-          const emergency = stop.emergencies[j];
-          const emergencyText = emergency.text || "Emergency alert";
-          const audioPath = path.join(tempDir, `emergency_${i}_${j}.mp3`);
-
-          try {
-            await this.generateAudioAnnouncement(
-              `Emergency. ${emergencyText}. Please remain calm and wait for the further instructions. Thank you.`,
-              audioPath,
-            );
-
-            const emergencyStartTime = Number(emergency.startSecond) || 0;
-            const emergencyDuration = Number(emergency.seconds) || 0;
-            emergencyAudioFiles.push({
-              path: audioPath,
-              startTime: emergencyStartTime,
-              duration: emergencyDuration,
-              stopName: stop.name,
-              stopIndex: i,
-              isEmergency: true,
-            });
-          } catch (error) {
-            console.error(`Error generating emergency audio:`, error);
+      try {
+        await this.generateAudioAnnouncement(
+          `Emergency. ${emergency.text}. Please remain calm and wait for the further instructions. Thank you.`,
+          audioPath,
+        );
+        let addedTimeBefore = 0;
+        for (const prevEmergency of emergencies) {
+          if (prevEmergency.logicalStart < emergency.logicalStart) {
+            addedTimeBefore += prevEmergency.duration;
           }
         }
+
+        const physicalStartTime = emergency.logicalStart + addedTimeBefore;
+
+        emergencyAudioFiles.push({
+          path: audioPath,
+          startTime: physicalStartTime,
+          duration: emergency.duration,
+          stopName: stops[emergency.stopIndex].name,
+          stopIndex: emergency.stopIndex,
+          isEmergency: true,
+        });
+      } catch (error) {
+        console.error(`Error generating emergency audio:`, error);
       }
     }
 
@@ -524,7 +534,7 @@ class VideoGenerator {
       ctx.fillText(line, this.width / 2, y);
       ctx.fillStyle = "#fbbf24";
       ctx.font = "bold 48px Arial";
-      ctx.fillText("🚨 EMERGENCY 🚨", this.width / 2, emergencyY + 60);
+      ctx.fillText("🚨 EMERGENCY 🚨", this.width / 2, emergencyY + 160);
       ctx.shadowColor = "transparent";
       ctx.shadowBlur = 0;
       ctx.shadowOffsetX = 0;
@@ -727,7 +737,12 @@ class VideoGenerator {
           .input(path.join(tempDir, "frame_%06d.png"))
           .inputFPS(this.fps)
           .videoCodec("libx264")
-          .outputOptions(["-pix_fmt yuv420p", "-preset ultrafast", "-crf 23"])
+          .outputOptions([
+            "-pix_fmt yuv420p",
+            "-preset ultrafast",
+            "-crf 28",
+            "-tune stillimage",
+          ])
           .output(videoOnlyPath)
           .on("end", () => resolve(videoOnlyPath))
           .on("error", (err) => reject(err))
