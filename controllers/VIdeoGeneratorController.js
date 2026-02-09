@@ -79,12 +79,12 @@ class VideoGenerator {
             stop.name,
             i + 1,
             stops.length,
-            timeRemaining
+            timeRemaining,
           );
 
           const framePath = path.join(
             tempDir,
-            `frame_${String(frameIndex).padStart(6, "0")}.png`
+            `frame_${String(frameIndex).padStart(6, "0")}.png`,
           );
           fs.writeFileSync(framePath, frameBuffer);
           frameIndex++;

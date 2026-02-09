@@ -180,39 +180,56 @@ class VideoGenerator {
       try {
         const filterComplex = [];
         const inputs = [`anullsrc=r=44100:cl=stereo:d=${totalDuration}`];
-
-        audioFiles.forEach((audio, index) => {
-          const delay = Math.floor(audio.startTime * 1000);
-          if (audio.isEmergency && audio.duration) {
-            // Trim emergency audio to specified duration
-            filterComplex.push(
-              `[${index + 1}:a]atrim=0:${audio.duration},adelay=${delay}|${delay}[a${index}]`,
-            );
-          } else {
-            filterComplex.push(
-              `[${index + 1}:a]adelay=${delay}|${delay}[a${index}]`,
-            );
-          }
-        });
-
-        const mixInputs = filterComplex
-          .map((_, index) => `[a${index}]`)
-          .join("");
-        filterComplex.push(
-          `[0:a]${mixInputs}amix=inputs=${audioFiles.length + 1}:duration=longest[outa]`,
-        );
+        let inputIndex = 1;
 
         const command = ffmpeg();
-
-        // Add silent audio as base
         command
           .input(`anullsrc=r=44100:cl=stereo:d=${totalDuration}`)
           .inputFormat("lavfi");
 
-        // Add all audio files
-        audioFiles.forEach((audio) => {
+        audioFiles.forEach((audio, index) => {
+          const delay = Math.floor(audio.startTime * 1000);
+
           command.input(audio.path);
+
+          if (audio.isEmergency && audio.duration) {
+            filterComplex.push(
+              `[${inputIndex}:a]adelay=${delay}|${delay}[a${index}]`,
+            );
+            inputIndex++;
+            const sirenPath = path.join(__dirname, "../media/siren-alert.mp3");
+            const sirenDuration = audio.duration;
+
+            command.input(sirenPath);
+
+            filterComplex.push(
+              `[${inputIndex}:a]aloop=loop=-1:size=2e+09,atrim=0:${sirenDuration},volume=0.4,adelay=${delay}|${delay}[siren${index}]`,
+            );
+            inputIndex++;
+
+            filterComplex.push(
+              `[a${index}][siren${index}]amix=inputs=2:duration=longest[emergency${index}]`,
+            );
+          } else {
+            filterComplex.push(
+              `[${inputIndex}:a]adelay=${delay}|${delay}[a${index}]`,
+            );
+            inputIndex++;
+          }
         });
+
+        const mixInputs = audioFiles
+          .map((audio, index) => {
+            if (audio.isEmergency && audio.duration) {
+              return `[emergency${index}]`;
+            }
+            return `[a${index}]`;
+          })
+          .join("");
+
+        filterComplex.push(
+          `[0:a]${mixInputs}amix=inputs=${audioFiles.length + 1}:duration=longest[outa]`,
+        );
 
         command
           .complexFilter(filterComplex)

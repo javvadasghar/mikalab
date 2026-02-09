@@ -47,12 +47,13 @@ const processVideoQueue = async () => {
       console.log(
         `Starting video generation for scenario ${task.scenarioId} (Duration: ${
           task.duration
-        }s, Queue position: ${videoQueue.length + 1})`
+        }s, Queue position: ${videoQueue.length + 1})`,
       );
 
-      // Fetch fresh scenario data from database to ensure all updates are included
-      const freshScenario = await scenarioModel.findById(task.scenarioId).lean();
-      
+      const freshScenario = await scenarioModel
+        .findById(task.scenarioId)
+        .lean();
+
       if (!freshScenario) {
         console.error(`Scenario ${task.scenarioId} not found in database`);
         continue;
@@ -60,7 +61,7 @@ const processVideoQueue = async () => {
 
       const generatedVideoPath = await videoGenerator.generateVideo(
         freshScenario,
-        task.videoPath
+        task.videoPath,
       );
       const generatedFileName = path.basename(generatedVideoPath);
 
@@ -70,12 +71,12 @@ const processVideoQueue = async () => {
       });
 
       console.log(
-        `Video generated successfully for scenario ${task.scenarioId}`
+        `Video generated successfully for scenario ${task.scenarioId}`,
       );
     } catch (err) {
       console.error(
         `Video generation error for scenario ${task.scenarioId}:`,
-        err
+        err,
       );
 
       await scenarioModel.findByIdAndUpdate(task.scenarioId, {
@@ -153,10 +154,6 @@ const createScenario = async (req, res) => {
       duration: duration,
     });
 
-    console.log(
-      `New scenario ${newScenario._id} created by ${user.firstName} ${user.lastName} (Duration: ${duration}s, Queue size: ${videoQueue.length})`
-    );
-
     setImmediate(() => processVideoQueue());
   } catch (err) {
     console.log("Error:", err);
@@ -170,7 +167,9 @@ const createScenario = async (req, res) => {
 const getAllScenarios = async (req, res) => {
   try {
     const user = req.user;
-    const query = user.isAdmin ? {} : { createdBy: user.id };
+    const query = user.isAdmin
+      ? { status: 1 }
+      : { createdBy: user.id, status: 1 };
 
     const scenarios = await scenarioModel
       .find(query)
@@ -180,19 +179,7 @@ const getAllScenarios = async (req, res) => {
 
     const scenariosWithStatus = scenarios.map((scenario) => {
       const scenarioObj = scenario.toObject();
-      if (videoExists(scenario._id) && scenario.videoStatus !== "completed") {
-        scenarioModel
-          .findByIdAndUpdate(scenario._id, {
-            videoStatus: "completed",
-            videoPath: `scenario_${scenario._id}.mp4`,
-          })
-          .catch((err) => console.error("Error updating video status:", err));
-        scenarioObj.videoStatus = "completed";
-        scenarioObj.videoPath = `scenario_${scenario._id}.mp4`;
-      } else if (
-        !videoExists(scenario._id) &&
-        scenario.videoStatus === "completed"
-      ) {
+      if (!videoExists(scenario._id) && scenario.videoStatus === "completed") {
         scenarioModel
           .findByIdAndUpdate(scenario._id, {
             videoStatus: "failed",
@@ -230,7 +217,10 @@ const updateScenario = async (req, res) => {
       });
     }
 
-    const existingScenario = await scenarioModel.findById(req.params.id);
+    const existingScenario = await scenarioModel.findOne({
+      _id: req.params.id,
+      status: 1,
+    });
 
     if (!existingScenario) {
       return res.status(404).json({
@@ -283,14 +273,15 @@ const updateScenario = async (req, res) => {
           lastUpdatedAt: new Date(),
           videoStatus: "generating",
         },
-        { new: true }
+        { new: true },
       )
       .populate("createdBy", "firstName lastName email")
       .populate("updatedBy", "firstName lastName email");
 
     res.status(200).json({
       success: true,
-      message: "Scenario updated successfully. Video will be regenerated shortly.",
+      message:
+        "Scenario updated successfully. Video will be regenerated shortly.",
       scenario: scenario,
       videoRegenerated: true,
     });
@@ -311,7 +302,7 @@ const updateScenario = async (req, res) => {
             while (attempts < maxRetries) {
               try {
                 await new Promise((resolve) =>
-                  setTimeout(resolve, retryDelay * attempts)
+                  setTimeout(resolve, retryDelay * attempts),
                 );
                 fs.unlinkSync(path.join(videosDir, file));
                 break;
@@ -319,7 +310,7 @@ const updateScenario = async (req, res) => {
                 attempts++;
                 if (attempts >= maxRetries) {
                   console.error(
-                    `Failed to delete ${file} after ${maxRetries} attempts: ${err.message}`
+                    `Failed to delete ${file} after ${maxRetries} attempts: ${err.message}`,
                   );
                 }
               }
@@ -335,7 +326,7 @@ const updateScenario = async (req, res) => {
     const duration = calculateScenarioDuration(processedStops);
 
     videoQueue = videoQueue.filter(
-      (task) => task.scenarioId.toString() !== scenario._id.toString()
+      (task) => task.scenarioId.toString() !== scenario._id.toString(),
     );
 
     videoQueue.push({
@@ -345,10 +336,6 @@ const updateScenario = async (req, res) => {
       videoFileName: videoFileName,
       duration: duration,
     });
-
-    console.log(
-      `Scenario ${scenario._id} updated by ${user.firstName} ${user.lastName} (Duration: ${duration}s, Queue size: ${videoQueue.length})`
-    );
     setImmediate(() => processVideoQueue());
   } catch (err) {
     console.log("Error:", err);
@@ -364,7 +351,7 @@ const getScenarioById = async (req, res) => {
     const user = req.user;
 
     const scenario = await scenarioModel
-      .findById(req.params.id)
+      .findOne({ _id: req.params.id, status: 1 })
       .populate("createdBy", "firstName lastName email")
       .populate("updatedBy", "firstName lastName email");
 
@@ -401,7 +388,10 @@ const getScenarioById = async (req, res) => {
 const deleteScenario = async (req, res) => {
   try {
     const user = req.user;
-    const scenario = await scenarioModel.findById(req.params.id);
+    const scenario = await scenarioModel.findOne({
+      _id: req.params.id,
+      status: 1,
+    });
 
     if (!scenario) {
       return res.status(404).json({
@@ -417,10 +407,13 @@ const deleteScenario = async (req, res) => {
       });
     }
 
-    await scenarioModel.findByIdAndDelete(req.params.id);
+    await scenarioModel.findByIdAndUpdate(req.params.id, {
+      status: 0,
+      deletedAt: new Date(),
+    });
     const initialQueueLength = videoQueue.length;
     videoQueue = videoQueue.filter(
-      (task) => task.scenarioId.toString() !== req.params.id
+      (task) => task.scenarioId.toString() !== req.params.id,
     );
 
     if (videoQueue.length < initialQueueLength) {
@@ -433,10 +426,6 @@ const deleteScenario = async (req, res) => {
       fs.unlinkSync(videoPath);
       console.log(`Deleted video file for scenario ${scenario._id}`);
     }
-
-    console.log(
-      `Scenario ${scenario._id} deleted by ${user.firstName} ${user.lastName}`
-    );
 
     res.status(200).json({
       success: true,
@@ -455,7 +444,10 @@ const previewScenarioVideo = async (req, res) => {
   try {
     const user = req.user;
 
-    const scenario = await scenarioModel.findById(req.params.id);
+    const scenario = await scenarioModel.findOne({
+      _id: req.params.id,
+      status: 1,
+    });
 
     if (!scenario) {
       return res.status(404).json({
@@ -476,7 +468,7 @@ const previewScenarioVideo = async (req, res) => {
 
     if (!fs.existsSync(videoPath)) {
       const inQueue = videoQueue.some(
-        (task) => task.scenarioId.toString() === scenario._id.toString()
+        (task) => task.scenarioId.toString() === scenario._id.toString(),
       );
 
       if (inQueue || scenario.videoStatus === "generating") {
@@ -531,7 +523,10 @@ const generateScenarioVideo = async (req, res) => {
   try {
     const user = req.user;
 
-    const scenario = await scenarioModel.findById(req.params.id);
+    const scenario = await scenarioModel.findOne({
+      _id: req.params.id,
+      status: 1,
+    });
 
     if (!scenario) {
       return res.status(404).json({
@@ -552,7 +547,7 @@ const generateScenarioVideo = async (req, res) => {
 
     if (!fs.existsSync(videoPath)) {
       const inQueue = videoQueue.some(
-        (task) => task.scenarioId.toString() === scenario._id.toString()
+        (task) => task.scenarioId.toString() === scenario._id.toString(),
       );
 
       if (inQueue || scenario.videoStatus === "generating") {

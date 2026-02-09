@@ -85,8 +85,17 @@ const scenarioSchema = new mongoose.Schema(
     lastUpdatedAt: {
       type: Date,
     },
+    status: {
+      type: Number,
+      default: 1,
+      enum: [0, 1],
+    },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 module.exports = mongoose.model("Scenario", scenarioSchema);

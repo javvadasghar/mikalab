@@ -27,7 +27,7 @@ app.use(
     exposedHeaders: ["Content-Range", "Accept-Ranges", "Content-Length"],
     preflightContinue: false,
     optionsSuccessStatus: 204,
-  })
+  }),
 );
 
 app.use(bodyParser.json());

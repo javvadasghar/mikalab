@@ -120,7 +120,7 @@ const loginUser = async (req, res) => {
         isAdmin: user.isAdmin,
       },
       process.env.JWT_SECRET || "your-secret-key",
-      { expiresIn: "7d" }
+      { expiresIn: "7d" },
     );
 
     res.status(200).json({
@@ -210,7 +210,7 @@ const authenticateUser = async (req, res, next) => {
 
     const decoded = jwt.verify(
       token,
-      process.env.JWT_SECRET || "your-secret-key"
+      process.env.JWT_SECRET || "your-secret-key",
     );
 
     const user = await userModel.findById(decoded.userId).select("-password");
