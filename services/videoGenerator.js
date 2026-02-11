@@ -57,6 +57,23 @@ class VideoGenerator {
   async createAudioTimeline(stops, tempDir) {
     const audioFiles = [];
     const emergencyAudioFiles = [];
+    const welcomeAudioPath = path.join(tempDir, "welcome.mp3");
+    const finalDestination = stops[stops.length - 1].name;
+    try {
+      await this.generateAudioAnnouncement(
+        `Welcome aboard. This bus is heading to ${finalDestination}. Please remain seated and enjoy your journey.`,
+        welcomeAudioPath,
+      );
+      audioFiles.push({
+        path: welcomeAudioPath,
+        startTime: 0,
+        stopName: "Welcome",
+        stopIndex: -1,
+        isEmergency: false,
+      });
+    } catch (error) {
+      console.error("Error generating welcome audio:", error);
+    }
 
     let logicalTime = 0;
     const stopArrivalTimes = [0];
@@ -123,7 +140,7 @@ class VideoGenerator {
       try {
         await this.generateAudioAnnouncement(announcementText, audioPath);
         const physicalArrival = physicalArrivalTimes[i];
-        const announcementTime = Math.max(0, physicalArrival - 5);
+        const announcementTime = Math.max(0, physicalArrival - 20);
         audioFiles.push({
           path: audioPath,
           startTime: announcementTime,
