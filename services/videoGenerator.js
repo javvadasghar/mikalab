@@ -540,14 +540,15 @@ class VideoGenerator {
       const emergencyType = currentPhase.emergencyType || "danger";
       const emergencyY = 0;
       const emergencyHeight = this.height;
+      const dangerBgColors = [
+        "rgba(220, 38, 38,",
+        "rgba(185, 28, 28,",
+        "rgba(153, 27, 27,",
+      ];
 
       const emergencyStyles = {
         danger: {
-          bgColors: [
-            "rgba(220, 38, 38,",
-            "rgba(185, 28, 28,",
-            "rgba(153, 27, 27,",
-          ],
+          bgColors: dangerBgColors,
           borderColor: "#fbbf24",
           icon: "⚠",
           iconColor: "#fbbf24",
@@ -557,60 +558,44 @@ class VideoGenerator {
           pulseSpeed: 3,
         },
         traffic: {
-          bgColors: [
-            "rgba(249, 115, 22,",
-            "rgba(234, 88, 12,",
-            "rgba(194, 65, 12,",
-          ],
+          bgColors: dangerBgColors,
           borderColor: "#fbbf24",
           icon: "🚗",
           iconColor: "#fbbf24",
           title: "⚠️ TRAFFIC ALERT ⚠️",
           titleColor: "#fbbf24",
-          hasStripes: false,
-          pulseSpeed: 2,
+          hasStripes: true,
+          pulseSpeed: 3,
         },
         information: {
-          bgColors: [
-            "rgba(37, 99, 235,",
-            "rgba(29, 78, 216,",
-            "rgba(30, 64, 175,",
-          ],
-          borderColor: "#60a5fa",
+          bgColors: dangerBgColors,
+          borderColor: "#fbbf24",
           icon: "ℹ️",
-          iconColor: "#60a5fa",
+          iconColor: "#fbbf24",
           title: "📢 INFORMATION",
-          titleColor: "#60a5fa",
-          hasStripes: false,
-          pulseSpeed: 1,
+          titleColor: "#fbbf24",
+          hasStripes: true,
+          pulseSpeed: 3,
         },
         weather: {
-          bgColors: [
-            "rgba(14, 116, 144,",
-            "rgba(21, 94, 117,",
-            "rgba(22, 78, 99,",
-          ],
-          borderColor: "#67e8f9",
+          bgColors: dangerBgColors,
+          borderColor: "#fbbf24",
           icon: "🌧️",
-          iconColor: "#67e8f9",
+          iconColor: "#fbbf24",
           title: "⛈️ WEATHER ALERT ⛈️",
-          titleColor: "#67e8f9",
-          hasStripes: false,
-          pulseSpeed: 2,
+          titleColor: "#fbbf24",
+          hasStripes: true,
+          pulseSpeed: 3,
         },
         announcement: {
-          bgColors: [
-            "rgba(107, 114, 128,",
-            "rgba(75, 85, 99,",
-            "rgba(55, 65, 81,",
-          ],
-          borderColor: "#9ca3af",
+          bgColors: dangerBgColors,
+          borderColor: "#fbbf24",
           icon: "📢",
-          iconColor: "#9ca3af",
+          iconColor: "#fbbf24",
           title: "📢 ANNOUNCEMENT",
-          titleColor: "#9ca3af",
-          hasStripes: false,
-          pulseSpeed: 1.5,
+          titleColor: "#fbbf24",
+          hasStripes: true,
+          pulseSpeed: 3,
         },
       };
 
