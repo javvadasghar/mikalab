@@ -17,33 +17,28 @@ const stopSchema = new mongoose.Schema({
     min: 0,
     default: 0,
   },
-  emergencyEnabled: {
-    type: Boolean,
-    default: false,
+});
+
+const emergencySchema = new mongoose.Schema({
+  text: {
+    type: String,
+    default: "",
   },
-  emergencySeconds: {
+  startSecond: {
     type: Number,
     default: 0,
     min: 0,
   },
-  emergencies: [
-    {
-      text: {
-        type: String,
-        default: "",
-      },
-      startSecond: {
-        type: Number,
-        default: 0,
-        min: 0,
-      },
-      seconds: {
-        type: Number,
-        default: 0,
-        min: 0,
-      },
-    },
-  ],
+  seconds: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  type: {
+    type: String,
+    enum: ["danger", "traffic", "information", "weather", "announcement"],
+    default: "danger",
+  },
 });
 
 const scenarioSchema = new mongoose.Schema(
@@ -53,6 +48,7 @@ const scenarioSchema = new mongoose.Schema(
       required: true,
     },
     stops: [stopSchema],
+    emergencies: [emergencySchema],
     videoPath: {
       type: String,
     },

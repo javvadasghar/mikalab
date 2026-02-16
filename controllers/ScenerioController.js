@@ -6,18 +6,18 @@ const fs = require("fs");
 let videoQueue = [];
 let isProcessingQueue = false;
 
-const calculateScenarioDuration = (stops) => {
-  return stops.reduce((total, stop) => {
-    const stay = Number(stop.travelTimeToNextStop) || 0;
-    const between = Number(stop.stayTimeAtStop) || 0;
-    const primaryEmergency = stop.emergencyEnabled
-      ? Number(stop.emergencySeconds) || 0
-      : 0;
-    const emergenciesSum = Array.isArray(stop.emergencies)
-      ? stop.emergencies.reduce((sum, e) => sum + (Number(e.seconds) || 0), 0)
-      : 0;
-    return total + stay + between + primaryEmergency + emergenciesSum;
+const calculateScenarioDuration = (stops, emergencies = []) => {
+  const stopsTotal = stops.reduce((total, stop) => {
+    const travel = Number(stop.travelTimeToNextStop) || 0;
+    const stay = Number(stop.stayTimeAtStop) || 0;
+    return total + travel + stay;
   }, 0);
+
+  const emergenciesTotal = Array.isArray(emergencies)
+    ? emergencies.reduce((sum, e) => sum + (Number(e.seconds) || 0), 0)
+    : 0;
+
+  return stopsTotal + emergenciesTotal;
 };
 
 const videoExists = (scenarioId) => {
@@ -86,12 +86,11 @@ const processVideoQueue = async () => {
   }
 
   isProcessingQueue = false;
-  console.log("Video generation queue completed");
 };
 
 const createScenario = async (req, res) => {
   try {
-    const { name, stops } = req.body;
+    const { name, stops, emergencies } = req.body;
     const user = req.user;
 
     if (!name || !stops || !Array.isArray(stops) || stops.length === 0) {
@@ -109,33 +108,26 @@ const createScenario = async (req, res) => {
         name: stop.name || `Stop ${index + 1}`,
         travelTimeToNextStop: travelTimeToNextStop,
         stayTimeAtStop: stayTimeAtStop,
-        emergencyEnabled:
-          !!(stop.emergencies && stop.emergencies.length > 0) ||
-          !!stop.emergencyEnabled,
-        emergencySeconds: Number(stop.emergencySeconds) || 0,
-        emergencies: Array.isArray(stop.emergencies)
-          ? stop.emergencies.map((e) => ({
-              text: e.text || "",
-              startSecond: Number(e.startSecond) || 0,
-              seconds: Number(e.seconds) || 0,
-            }))
-          : [],
       };
     });
+
+    const processedEmergencies = Array.isArray(emergencies)
+      ? emergencies.map((e) => ({
+          text: e.text || "",
+          startSecond: Number(e.startSecond) || 0,
+          seconds: Number(e.seconds) || 0,
+          type: e.type || "danger",
+        }))
+      : [];
 
     const newScenario = await new scenarioModel({
       name: name,
       stops: processedStops,
+      emergencies: processedEmergencies,
       videoStatus: "generating",
       createdBy: user.id,
       createdByName: `${user.firstName} ${user.lastName}`,
     }).save();
-
-    res.status(201).json({
-      success: true,
-      message: "Scenario created successfully. Video is being generated.",
-      scenario: newScenario,
-    });
 
     const videosDir = path.join(__dirname, "../videos");
     if (!fs.existsSync(videosDir)) {
@@ -144,7 +136,10 @@ const createScenario = async (req, res) => {
 
     const videoFileName = `scenario_${newScenario._id}.mp4`;
     const videoPath = path.join(videosDir, videoFileName);
-    const duration = calculateScenarioDuration(processedStops);
+    const duration = calculateScenarioDuration(
+      processedStops,
+      processedEmergencies,
+    );
 
     videoQueue.push({
       scenarioId: newScenario._id,
@@ -155,6 +150,21 @@ const createScenario = async (req, res) => {
     });
 
     setImmediate(() => processVideoQueue());
+
+    res.status(201).json({
+      success: true,
+      message: "Scenario created successfully. Video generation in progress.",
+      scenario: {
+        _id: newScenario._id,
+        name: newScenario.name,
+        stops: newScenario.stops,
+        emergencies: newScenario.emergencies,
+        theme: newScenario.theme,
+        videoStatus: newScenario.videoStatus,
+        createdBy: newScenario.createdBy,
+        createdAt: newScenario.createdAt,
+      },
+    });
   } catch (err) {
     console.log("Error:", err);
     res.status(500).json({
@@ -170,25 +180,36 @@ const getAllScenarios = async (req, res) => {
     const query = user.isAdmin
       ? { status: 1 }
       : { createdBy: user.id, status: 1 };
-
     const scenarios = await scenarioModel
       .find(query)
       .populate("createdBy", "firstName lastName email")
       .populate("updatedBy", "firstName lastName email")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
     const scenariosWithStatus = scenarios.map((scenario) => {
-      const scenarioObj = scenario.toObject();
       if (!videoExists(scenario._id) && scenario.videoStatus === "completed") {
         scenarioModel
           .findByIdAndUpdate(scenario._id, {
             videoStatus: "failed",
           })
           .catch((err) => console.error("Error updating video status:", err));
-        scenarioObj.videoStatus = "failed";
+        scenario.videoStatus = "failed";
       }
 
-      return scenarioObj;
+      return {
+        _id: scenario._id,
+        name: scenario.name,
+        stops: scenario.stops || [],
+        emergencies: scenario.emergencies || [],
+        theme: scenario.theme,
+        videoPath: scenario.videoPath,
+        videoStatus: scenario.videoStatus,
+        createdBy: scenario.createdBy,
+        updatedBy: scenario.updatedBy,
+        createdAt: scenario.createdAt,
+        updatedAt: scenario.updatedAt,
+      };
     });
 
     res.status(200).json({
@@ -207,7 +228,7 @@ const getAllScenarios = async (req, res) => {
 
 const updateScenario = async (req, res) => {
   try {
-    const { name, stops, theme } = req.body;
+    const { name, stops, theme, emergencies } = req.body;
     const user = req.user;
 
     if (!name || !stops || !Array.isArray(stops) || stops.length === 0) {
@@ -247,46 +268,58 @@ const updateScenario = async (req, res) => {
         name: stop.name || `Stop ${index + 1}`,
         travelTimeToNextStop: travelTimeToNextStop,
         stayTimeAtStop: stayTimeAtStop,
-        emergencyEnabled:
-          !!(stop.emergencies && stop.emergencies.length > 0) ||
-          !!stop.emergencyEnabled,
-        emergencySeconds: Number(stop.emergencySeconds) || 0,
-        emergencies: Array.isArray(stop.emergencies)
-          ? stop.emergencies.map((e) => ({
-              text: e.text || "",
-              startSecond: Number(e.startSecond) || 0,
-              seconds: Number(e.seconds) || 0,
-            }))
-          : [],
       };
     });
 
-    const scenario = await scenarioModel
-      .findByIdAndUpdate(
-        req.params.id,
-        {
+    const processedEmergencies = Array.isArray(emergencies)
+      ? emergencies.map((e) => ({
+          text: e.text || "",
+          startSecond: Number(e.startSecond) || 0,
+          seconds: Number(e.seconds) || 0,
+          type: e.type || "danger",
+        }))
+      : [];
+
+    await scenarioModel.updateOne(
+      { _id: req.params.id },
+      {
+        $set: {
           name: name,
           stops: processedStops,
-          ...(theme && { theme: theme }),
-          updatedBy: user.id,
-          updatedByName: `${user.firstName} ${user.lastName}`,
-          lastUpdatedAt: new Date(),
+          emergencies: processedEmergencies,
+          theme: theme || "dark",
           videoStatus: "generating",
+          updatedBy: user.id,
+          updatedAt: new Date(),
         },
-        { new: true },
-      )
+      },
+    );
+
+    const scenario = await scenarioModel
+      .findById(req.params.id)
       .populate("createdBy", "firstName lastName email")
-      .populate("updatedBy", "firstName lastName email");
+      .populate("updatedBy", "firstName lastName email")
+      .lean();
 
     res.status(200).json({
       success: true,
       message:
         "Scenario updated successfully. Video will be regenerated shortly.",
-      scenario: scenario,
+      scenario: {
+        _id: scenario._id,
+        name: scenario.name,
+        stops: scenario.stops,
+        emergencies: scenario.emergencies,
+        theme: scenario.theme,
+        videoStatus: scenario.videoStatus,
+        createdBy: scenario.createdBy,
+        updatedBy: scenario.updatedBy,
+        createdAt: scenario.createdAt,
+        updatedAt: scenario.updatedAt,
+      },
       videoRegenerated: true,
     });
 
-    // Always regenerate video on update
     const videosDir = path.join(__dirname, "../videos");
     const deleteOldVideos = async () => {
       const maxRetries = 3;
@@ -323,7 +356,10 @@ const updateScenario = async (req, res) => {
 
     const videoFileName = `scenario_${scenario._id}.mp4`;
     const videoPath = path.join(videosDir, videoFileName);
-    const duration = calculateScenarioDuration(processedStops);
+    const duration = calculateScenarioDuration(
+      processedStops,
+      processedEmergencies,
+    );
 
     videoQueue = videoQueue.filter(
       (task) => task.scenarioId.toString() !== scenario._id.toString(),
@@ -353,7 +389,8 @@ const getScenarioById = async (req, res) => {
     const scenario = await scenarioModel
       .findOne({ _id: req.params.id, status: 1 })
       .populate("createdBy", "firstName lastName email")
-      .populate("updatedBy", "firstName lastName email");
+      .populate("updatedBy", "firstName lastName email")
+      .lean();
 
     if (!scenario) {
       return res.status(404).json({
@@ -372,9 +409,23 @@ const getScenarioById = async (req, res) => {
       });
     }
 
+    const cleanScenario = {
+      _id: scenario._id,
+      name: scenario.name,
+      stops: scenario.stops || [],
+      emergencies: scenario.emergencies || [],
+      theme: scenario.theme,
+      videoPath: scenario.videoPath,
+      videoStatus: scenario.videoStatus,
+      createdBy: scenario.createdBy,
+      updatedBy: scenario.updatedBy,
+      createdAt: scenario.createdAt,
+      updatedAt: scenario.updatedAt,
+    };
+
     res.status(200).json({
       success: true,
-      scenario: scenario,
+      scenario: cleanScenario,
     });
   } catch (err) {
     console.log("Error:", err);
