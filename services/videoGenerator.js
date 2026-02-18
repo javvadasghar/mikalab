@@ -2,6 +2,7 @@ const { createCanvas } = require("canvas");
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegPath = require("ffmpeg-static");
 const fs = require("fs");
+const fsPromises = require("fs").promises;
 const path = require("path");
 const gtts = require("gtts");
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -925,8 +926,11 @@ class VideoGenerator {
           tempDir,
           `frame_${String(frameIndex).padStart(6, "0")}.png`,
         );
-        fs.writeFileSync(framePath, frameBuffer);
+        await fsPromises.writeFile(framePath, frameBuffer);
         frameIndex++;
+        if (frame % 10 === 0) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
       }
 
       const videoOnlyPath = path.join(tempDir, "video_only.mp4");
@@ -962,15 +966,19 @@ class VideoGenerator {
             .run();
         });
       } else {
-        fs.copyFileSync(videoOnlyPath, outputPath);
+        await fsPromises.copyFile(videoOnlyPath, outputPath);
       }
 
-      fs.rmSync(tempDir, { recursive: true, force: true });
+      await fsPromises.rm(tempDir, { recursive: true, force: true });
       console.log("Video generation complete!");
       return outputPath;
     } catch (error) {
       console.error("Error in generateVideo:", error);
-      fs.rmSync(tempDir, { recursive: true, force: true });
+      try {
+        await fsPromises.rm(tempDir, { recursive: true, force: true });
+      } catch (cleanupError) {
+        console.error("Error cleaning up temp directory:", cleanupError);
+      }
       throw error;
     }
   }
