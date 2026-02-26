@@ -190,59 +190,9 @@ const deleteUser = async (req, res) => {
   }
 };
 
-const authenticateUser = async (req, res, next) => {
-  try {
-    let token = null;
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      token = authHeader.split(" ")[1];
-    }
-    if (!token && req.query.token) {
-      token = req.query.token;
-    }
-
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required",
-      });
-    }
-
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET || "your-secret-key",
-    );
-
-    const user = await userModel.findById(decoded.userId).select("-password");
-
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "User not found",
-      });
-    }
-
-    req.user = {
-      id: user._id,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      isAdmin: user.isAdmin,
-    };
-
-    next();
-  } catch (error) {
-    return res.status(401).json({
-      success: false,
-      message: "Invalid or expired token",
-    });
-  }
-};
-
 module.exports = {
   createUser,
   loginUser,
   getAllUsers,
   deleteUser,
-  authenticateUser,
 };

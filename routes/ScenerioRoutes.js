@@ -10,7 +10,7 @@ const {
   previewScenarioVideo,
   getQueueStatus,
 } = require("../controllers/ScenerioController");
-const { authenticateUser } = require("../controllers/userController");
+const { authenticateUser } = require("../middleware/authMiddleware");
 router.post("/", authenticateUser, createScenario);
 router.get("/", authenticateUser, getAllScenarios);
 router.get("/queue-status", authenticateUser, getQueueStatus);
