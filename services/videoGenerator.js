@@ -58,26 +58,22 @@ class VideoGenerator {
   async createAudioTimeline(stops, emergencies, tempDir) {
     const audioFiles = [];
     const emergencyAudioFiles = [];
-    const hasEmergencies =
-      emergencies && Array.isArray(emergencies) && emergencies.length > 0;
-    if (!hasEmergencies) {
-      const welcomeAudioPath = path.join(tempDir, "welcome.mp3");
-      const finalDestination = stops[stops.length - 1].name;
-      try {
-        await this.generateAudioAnnouncement(
-          `Welcome aboard. This bus is heading to ${finalDestination}. Please remain seated and enjoy your journey.`,
-          welcomeAudioPath,
-        );
-        audioFiles.push({
-          path: welcomeAudioPath,
-          startTime: 0,
-          stopName: "Welcome",
-          stopIndex: -1,
-          isEmergency: false,
-        });
-      } catch (error) {
-        console.error("Error generating welcome audio:", error);
-      }
+    const welcomeAudioPath = path.join(tempDir, "welcome.mp3");
+    const finalDestination = stops[stops.length - 1].name;
+    try {
+      await this.generateAudioAnnouncement(
+        `Welcome aboard. This bus is heading to ${finalDestination}. Please remain seated and enjoy your journey.`,
+        welcomeAudioPath,
+      );
+      audioFiles.push({
+        path: welcomeAudioPath,
+        startTime: 0,
+        stopName: "Welcome",
+        stopIndex: -1,
+        isEmergency: false,
+      });
+    } catch (error) {
+      console.error("Error generating welcome audio:", error);
     }
 
     let logicalTime = 0;
@@ -125,35 +121,33 @@ class VideoGenerator {
       physicalArrivalTimes.push(logicalArrival + addedTime);
     }
 
-    if (!hasEmergencies) {
-      for (let i = 0; i < stops.length; i++) {
-        const stop = stops[i];
-        const isLastStop = i === stops.length - 1;
+    for (let i = 0; i < stops.length; i++) {
+      const stop = stops[i];
+      const isLastStop = i === stops.length - 1;
 
-        if (i === 0) {
-          continue;
-        }
+      if (i === 0) {
+        continue;
+      }
 
-        const announcementText = isLastStop
-          ? `Arriving at final stop, ${stop.name}, Please leave the bus, thank you for riding with us.`
-          : `Next stop, ${stop.name}`;
+      const announcementText = isLastStop
+        ? `Arriving at final stop, ${stop.name}, Please leave the bus, thank you for riding with us.`
+        : `Next stop, ${stop.name}`;
 
-        const audioPath = path.join(tempDir, `announcement_${i}.mp3`);
+      const audioPath = path.join(tempDir, `announcement_${i}.mp3`);
 
-        try {
-          await this.generateAudioAnnouncement(announcementText, audioPath);
-          const physicalArrival = physicalArrivalTimes[i];
-          const announcementTime = Math.max(0, physicalArrival - 20);
-          audioFiles.push({
-            path: audioPath,
-            startTime: announcementTime,
-            stopName: stop.name,
-            stopIndex: i,
-            isEmergency: false,
-          });
-        } catch (error) {
-          console.error(`Error generating audio for stop ${stop.name}:`, error);
-        }
+      try {
+        await this.generateAudioAnnouncement(announcementText, audioPath);
+        const physicalArrival = physicalArrivalTimes[i];
+        const announcementTime = Math.max(0, physicalArrival - 20);
+        audioFiles.push({
+          path: audioPath,
+          startTime: announcementTime,
+          stopName: stop.name,
+          stopIndex: i,
+          isEmergency: false,
+        });
+      } catch (error) {
+        console.error(`Error generating audio for stop ${stop.name}:`, error);
       }
     }
 
